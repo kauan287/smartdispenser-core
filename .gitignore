@@ -1,0 +1,30 @@
+# Build artifacts
+bin/
+obj/
+publish/
+coverage/
+
+# .NET
+*.user
+*.suo
+.vs/
+.vscode/
+*.swp
+
+# Secrets / local config
+.env
+appsettings.Local.json
+appsettings.Development.json
+
+# Logs
+*.log
+logs/
+
+# Test results
+TestResults/
+*.trx
+
+# NuGet
+*.nupkg
+*.snupkg
+packages/

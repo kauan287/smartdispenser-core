@@ -1,0 +1,49 @@
+version: "3.9"
+
+services:
+  # ── PostgreSQL ────────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: smartdispenser_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: smartdispenser
+      POSTGRES_PASSWORD: smartdispenser
+      POSTGRES_DB: smartdispenser
+    ports:
+      - "5433:5432"   # 5433 to avoid clash with Project 1 on 5432
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smartdispenser"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── SmartDispenser API + Blazor Dashboard ─────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: smartdispenser_api
+    restart: unless-stopped
+    ports:
+      - "8001:8080"   # API: http://localhost:8001
+      - "8002:8081"   # Blazor dashboard: http://localhost:8002 (if separate port)
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=smartdispenser;Username=smartdispenser;Password=smartdispenser"
+      HealthTechApi__BaseUrl: ${HEALTHTECH_API_URL:-http://host.docker.internal:8000}
+      Webhook__Secret: ${WEBHOOK_SECRET}
+      Database__AutoMigrate: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    extra_hosts:
+      # Allows container to reach host machine (where Project 1 might be running)
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  postgres_data:
+    driver: local

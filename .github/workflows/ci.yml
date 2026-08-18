@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  DOTNET_VERSION: "9.0.x"
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  # ── Build & Test ──────────────────────────────────────────────────────────────
+  build-and-test:
+    name: "Build & Test (.NET 9)"
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET ${{ env.DOTNET_VERSION }}
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore dependencies
+        run: dotnet restore SmartDispenser.sln
+
+      - name: Build (no warnings = no ship)
+        run: dotnet build SmartDispenser.sln --no-restore -c Release
+
+      - name: Run unit tests with coverage
+        run: |
+          dotnet test tests/SmartDispenser.UnitTests/ \
+            --no-build \
+            -c Release \
+            --verbosity normal \
+            --collect:"XPlat Code Coverage" \
+            --results-directory ./coverage
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          directory: ./coverage
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  # ── Code Quality ──────────────────────────────────────────────────────────────
+  quality:
+    name: "Code Quality"
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET ${{ env.DOTNET_VERSION }}
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore
+        run: dotnet restore SmartDispenser.sln
+
+      - name: Check formatting
+        run: dotnet format SmartDispenser.sln --verify-no-changes --verbosity diagnostic
+
+  # ── Docker Build ──────────────────────────────────────────────────────────────
+  docker:
+    name: "Docker Build"
+    runs-on: ubuntu-latest
+    needs: [build-and-test]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t smartdispenser-core:ci .
+
+      - name: Smoke test — container starts and /health/live responds
+        run: |
+          docker run -d \
+            --name smartdispenser_smoke \
+            -e ASPNETCORE_ENVIRONMENT=Development \
+            -e ConnectionStrings__DefaultConnection="Host=localhost;Database=x;Username=x;Password=x" \
+            -e HealthTechApi__BaseUrl=http://localhost:8000 \
+            -e Webhook__Secret=test-secret-at-least-32-chars-ok \
+            -e Database__AutoMigrate=false \
+            -p 8080:8080 \
+            smartdispenser-core:ci
+          # Wait up to 20s for the container to become healthy
+          timeout 20 bash -c 'until curl -sf http://localhost:8080/health/live; do sleep 1; done'
+          docker stop smartdispenser_smoke
