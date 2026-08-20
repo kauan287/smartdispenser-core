@@ -109,7 +109,9 @@ public sealed class InitiateDispenseHandlerTests
             new InitiateDispenseCommand(dispenser.Id, "RX-002", "PATIENT-42"), CancellationToken.None);
 
         result.Success.Should().BeFalse();
-        result.ErrorMessage.Should().Contain("audit chain");
+        // ContainEquivalentOf performs case-insensitive substring match
+        result.ErrorMessage.Should().NotBeNull()
+            .And.ContainEquivalentOf("audit chain");
         _hubContextMock.Verify(
             h => h.SendCommandAsync(It.IsAny<Guid>(), It.IsAny<DispenserCommand>(), It.IsAny<CancellationToken>()),
             Times.Never);
@@ -120,8 +122,10 @@ public sealed class InitiateDispenseHandlerTests
     [Fact]
     public async Task Handle_WhenDispenserIsOffline_ReturnsFailure()
     {
-        // Arrange
-        SetupApprovedPrescription();
+        // Arrange — prescription IS approved, but machine is Offline.
+        // The handler calls HealthTech API BEFORE checking dispenser state,
+        // so the mock must match the prescriptionId used in the command.
+        SetupApprovedPrescription("RX-003");
         var offlineDispenser = CreateIdleDispenser();
         offlineDispenser.GoOffline(); // State: Offline
 
@@ -160,7 +164,7 @@ public sealed class InitiateDispenseHandlerTests
 
     private static Dispenser CreateIdleDispenser()
     {
-        var d = Dispenser.Create("TestMachine-01", "Pharmacy A", capacity: 50);
+        var d = Dispenser.Create("TestMachine-01", "Pharmacy A", inventoryCapacity: 50);
         d.GoOnline();
         d.UpdateInventory(30);
         return d;

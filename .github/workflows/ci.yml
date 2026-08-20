@@ -2,19 +2,19 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, master, develop]
   pull_request:
-    branches: [main]
+    branches: [main, master]
 
 env:
-  DOTNET_VERSION: "9.0.x"
+  DOTNET_VERSION: "10.0.x"
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
 
 jobs:
   # ── Build & Test ──────────────────────────────────────────────────────────────
   build-and-test:
-    name: "Build & Test (.NET 9)"
+    name: "Build & Test (.NET 10)"
     runs-on: ubuntu-latest
 
     steps:
@@ -28,7 +28,7 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore SmartDispenser.sln
 
-      - name: Build (no warnings = no ship)
+      - name: Build (Release)
         run: dotnet build SmartDispenser.sln --no-restore -c Release
 
       - name: Run unit tests with coverage
@@ -76,10 +76,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build Docker image
+      - name: Build Docker image (.NET 10)
         run: docker build -t smartdispenser-core:ci .
 
-      - name: Smoke test — container starts and /health/live responds
+      - name: Smoke test — /health/live responds 200
         run: |
           docker run -d \
             --name smartdispenser_smoke \
@@ -90,6 +90,5 @@ jobs:
             -e Database__AutoMigrate=false \
             -p 8080:8080 \
             smartdispenser-core:ci
-          # Wait up to 20s for the container to become healthy
           timeout 20 bash -c 'until curl -sf http://localhost:8080/health/live; do sleep 1; done'
           docker stop smartdispenser_smoke

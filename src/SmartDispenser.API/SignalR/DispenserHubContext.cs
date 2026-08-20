@@ -1,19 +1,24 @@
 using Microsoft.AspNetCore.SignalR;
+using SmartDispenser.API.Hubs;
 using SmartDispenser.Core.DTOs;
 using SmartDispenser.Core.Interfaces;
 
-namespace SmartDispenser.Infrastructure.SignalR;
+namespace SmartDispenser.API.SignalR;
 
 /// <summary>
 /// Typed SignalR hub proxy — wraps IHubContext to provide a clean
 /// interface for the application layer, completely decoupling it
 /// from the SignalR infrastructure package.
+///
+/// Lives in SmartDispenser.API (not Infrastructure) because it depends
+/// on DispenserHub and IDispenserClient, which are API-layer concerns.
+/// Infrastructure only knows about IDispenserHubContext (Core interface).
 /// </summary>
 public sealed class DispenserHubContext : IDispenserHubContext
 {
-    private readonly IHubContext<API.Hubs.DispenserHub, IDispenserClient> _hubContext;
+    private readonly IHubContext<DispenserHub, IDispenserClient> _hubContext;
 
-    public DispenserHubContext(IHubContext<API.Hubs.DispenserHub, IDispenserClient> hubContext)
+    public DispenserHubContext(IHubContext<DispenserHub, IDispenserClient> hubContext)
     {
         _hubContext = hubContext;
     }

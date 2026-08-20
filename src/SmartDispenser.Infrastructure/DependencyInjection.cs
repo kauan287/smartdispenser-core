@@ -5,7 +5,6 @@ using SmartDispenser.Core.Interfaces;
 using SmartDispenser.Infrastructure.Data;
 using SmartDispenser.Infrastructure.ExternalServices;
 using SmartDispenser.Infrastructure.Repositories;
-using SmartDispenser.Infrastructure.SignalR;
 
 namespace SmartDispenser.Infrastructure;
 
@@ -30,8 +29,10 @@ public static class DependencyInjection
         services.AddScoped<IPaymentRepository, PaymentRepository>();
         services.AddScoped<IDispenseRequestRepository, DispenseRequestRepository>();
 
-        // ── SignalR hub context ───────────────────────────────────────────────
-        services.AddScoped<IDispenserHubContext, DispenserHubContext>();
+
+        // Note: IDispenserHubContext is registered in Program.cs (API layer)
+        // because its implementation depends on DispenserHub and IDispenserClient,
+        // which are API-layer types. Infrastructure only defines the interface (Core).
 
         // ── HealthTech API Client with full resilience pipeline ───────────────
         services.AddHttpClient<IHealthTechApiClient, HealthTechApiClient>(client =>
