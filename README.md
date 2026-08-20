@@ -1,13 +1,13 @@
 # 💊 SmartDispenser Core
 
-[![CI](https://github.com/kauan287/smartdispenser-core/actions/workflows/ci.yml/badge.svg)](https://github.com/kauan287/smartdispenser-core/actions/workflows/ci.yml)
-[![.NET 9](https://img.shields.io/badge/.NET-9.0-512BD4.svg?logo=dotnet)](https://dotnet.microsoft.com)
-[![ASP.NET Core](https://img.shields.io/badge/ASP.NET_Core-9.0-blue.svg)](https://learn.microsoft.com/aspnet/core)
-[![EF Core](https://img.shields.io/badge/EF_Core-9.0-green.svg)](https://learn.microsoft.com/ef/core)
+[![CI](https://github.com/kauan287/smartdispenser-core/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/kauan287/smartdispenser-core/actions/workflows/ci.yml)
+[![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4.svg?logo=dotnet)](https://dotnet.microsoft.com)
+[![ASP.NET Core](https://img.shields.io/badge/ASP.NET_Core-10.0-blue.svg)](https://learn.microsoft.com/aspnet/core)
+[![EF Core](https://img.shields.io/badge/EF_Core-10.0-green.svg)](https://learn.microsoft.com/ef/core)
 [![SignalR](https://img.shields.io/badge/SignalR-Realtime-orange.svg)](https://learn.microsoft.com/aspnet/core/signalr)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **Production-grade ASP.NET Core 9 backend** for a network of smart pharmaceutical vending machines.
+> **Production-grade ASP.NET Core 10 backend** for a network of smart pharmaceutical vending machines.
 > Real-time hardware control via SignalR, cryptographic webhook validation, resilient integration with
 > the [HealthTech Agent Orchestrator](https://github.com/kauan287/healthtech-agent-orchestrator),
 > and a live Blazor Server dashboard.
@@ -16,10 +16,13 @@
 
 ## 🔗 Part of the MedTech Ecosystem
 
-This project is the **operational backend** for the medication dispensing pipeline.
-It consumes the [HealthTech Agent Orchestrator](https://github.com/kauan287/healthtech-agent-orchestrator)
-to verify that a prescription has been AI-evaluated, doctor-approved, and cryptographically signed
-**before any medication is released**.
+This is **Project 2** of a two-project portfolio demonstrating a full end-to-end digital health pipeline.
+A prescription must be approved by Project 1 before this project physically releases the medication.
+
+| Project | Stack | Role |
+|---|---|---|
+| **[HealthTech Agent Orchestrator](https://github.com/kauan287/healthtech-agent-orchestrator)** [![CI](https://github.com/kauan287/healthtech-agent-orchestrator/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/kauan287/healthtech-agent-orchestrator/actions/workflows/ci.yml) | Python · FastAPI · LangGraph · PostgreSQL | AI triage, safety checks, doctor approval, cryptographic audit |
+| **SmartDispenser Core** *(this repo)* | C# · ASP.NET Core 10 · SignalR · Blazor | Real-time hardware control, payment webhooks, live dashboard |
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -36,7 +39,7 @@ to verify that a prescription has been AI-evaluated, doctor-approved, and crypto
 │                        ▼                                            │
 │  ┌─────────────────────────────────────────┐                       │
 │  │     SmartDispenser Core (this repo)     │                       │
-│  │     C# · ASP.NET Core 9 · SignalR       │                       │
+│  │     C# · ASP.NET Core 10 · SignalR      │                       │
 │  │                                         │                       │
 │  │  Verify prescription ✓                  │                       │
 │  │  Process payment (HMAC webhook) ✓       │                       │
@@ -56,7 +59,10 @@ A medication is dispensed **only when ALL of the following are true**:
 4. 🔐 SHA-256 audit chain is cryptographically intact
 5. 💳 Payment webhook confirmed & signature validated
 
+📦 **[HealthTech Agent Orchestrator → github.com/kauan287/healthtech-agent-orchestrator](https://github.com/kauan287/healthtech-agent-orchestrator)**
+
 ---
+
 
 ## ✨ Key Features
 
