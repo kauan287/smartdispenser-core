@@ -58,4 +58,19 @@ public sealed class OutboxTests
 
         (await db.OutboxMessages.CountAsync()).Should().Be(1);
     }
+
+    [Fact]
+    public void Synchronous_save_also_writes_the_outbox_message()
+    {
+        using var db = TestDb.Create();
+        var request = DispenseRequest.Create(Guid.NewGuid(), "RX-1", "PATIENT-1", "Amoxicillin", "500 mg");
+        db.DispenseRequests.Add(request);
+        db.SaveChanges();
+
+        request.MarkFailed("Payment failed");
+        db.SaveChanges();
+
+        db.OutboxMessages.Single().Deserialize<DispenseResultNotification>()
+            .Should().Be(new DispenseResultNotification(request.Id, false, "Payment failed"));
+    }
 }
