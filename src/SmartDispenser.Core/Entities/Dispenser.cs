@@ -69,12 +69,6 @@ public sealed class Dispenser
         SetStatus(DispenserStatus.Error);
     }
 
-    public void ResetFromError()
-    {
-        EnsureStatus(DispenserStatus.Error, "reset");
-        SetStatus(ReadyStatus);
-    }
-
     public void GoOnline(string? firmwareVersion = null)
     {
         FirmwareVersion = firmwareVersion ?? FirmwareVersion;

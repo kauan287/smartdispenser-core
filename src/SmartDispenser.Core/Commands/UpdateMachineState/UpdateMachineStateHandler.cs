@@ -22,8 +22,7 @@ public enum MachineStateEvent
     DispenseFailed,
     InventoryUpdated,
     Online,
-    Offline,
-    ErrorReset
+    Offline
 }
 
 public sealed class UpdateMachineStateHandler(
@@ -74,10 +73,6 @@ public sealed class UpdateMachineStateHandler(
                 var failedId = Required(cmd.RequestId);
                 dispenser.FailDispensing(failedId);
                 await UpdateRequest(failedId, r => r.MarkFailed(cmd.ErrorMessage ?? "Machine reported a dispensing failure."), ct);
-                break;
-
-            case MachineStateEvent.ErrorReset:
-                dispenser.ResetFromError();
                 break;
         }
 

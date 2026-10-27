@@ -176,7 +176,7 @@ The webhook answers `200` for every signed request it processes, including one i
 
 ### Machine protocol (SignalR)
 
-A machine connects to `/hubs/dispensers?machineId={dispenser-id}`. Each call it makes applies to that machine.
+A machine connects to `/hubs/dispensers?machineId={dispenser-id}&firmwareVersion={version}`. Each call it makes applies to that machine. A machine in `Error` returns to service when it disconnects and reconnects, which a technician does after clearing the fault.
 
 | Direction | Method | Effect |
 |---|---|---|
@@ -215,7 +215,7 @@ A machine connects to `/hubs/dispensers?machineId={dispenser-id}`. Each call it 
 dotnet test SmartDispenser.sln
 ```
 
-- **Unit tests** (54) cover the state machines, the outbox backoff, the HMAC middleware against a signature computed with `openssl`, and the three handlers. The handlers run on the real repositories over the in-memory provider. Separate tests cover a partial-save failure and a concurrent write to one machine.
+- **Unit tests** (55) cover the state machines, the outbox backoff, the HMAC middleware against a signature computed with `openssl`, and the three handlers. The handlers run on the real repositories over the in-memory provider. Separate tests cover a partial-save failure and a concurrent write to one machine.
 - **Integration tests** (9) host the API with `WebApplicationFactory`, connect a SignalR client as the machine, and stub the orchestrator's HTTP responses. They cover the full flow from reservation through payment and confirmation to the dashboard, plus replayed webhooks, unsigned webhooks, prescription reuse, unknown prescriptions, and the rate limit. Two of them check the database unique index and run only on PostgreSQL.
 
 To run the integration tests on PostgreSQL, start the Compose database and run `make test-postgres`. CI runs them on InMemory and on a PostgreSQL 16 service container.

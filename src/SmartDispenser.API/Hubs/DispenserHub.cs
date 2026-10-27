@@ -12,7 +12,7 @@ public interface IMachineClient
 }
 
 /// <summary>
-/// SignalR endpoint for vending machines. A machine connects with <c>?machineId={guid}</c> and
+/// SignalR endpoint for vending machines. A machine connects with <c>?machineId={guid}&amp;firmwareVersion={v}</c> and
 /// every later call acts on that machine only. This demo trusts the query string; a production
 /// deployment would take the machine id from an authenticated claim in OnConnectedAsync.
 /// </summary>
@@ -24,7 +24,8 @@ public sealed class DispenserHub(IMediator mediator, ILogger<DispenserHub> logge
 
     public override async Task OnConnectedAsync()
     {
-        if (!Guid.TryParse(Context.GetHttpContext()?.Request.Query["machineId"], out var dispenserId))
+        var query = Context.GetHttpContext()?.Request.Query;
+        if (!Guid.TryParse(query?["machineId"], out var dispenserId))
         {
             logger.LogWarning("Rejected hub connection {ConnectionId} without a valid machineId", Context.ConnectionId);
             Context.Abort();
@@ -33,7 +34,8 @@ public sealed class DispenserHub(IMediator mediator, ILogger<DispenserHub> logge
 
         Context.Items[MachineIdKey] = dispenserId;
         await Groups.AddToGroupAsync(Context.ConnectionId, MachineGroup(dispenserId));
-        await mediator.Send(new UpdateMachineStateCommand(dispenserId, MachineStateEvent.Online));
+        var firmwareVersion = query?["firmwareVersion"].ToString() is { Length: > 0 and <= 50 } version ? version : null;
+        await mediator.Send(new UpdateMachineStateCommand(dispenserId, MachineStateEvent.Online, FirmwareVersion: firmwareVersion));
         await base.OnConnectedAsync();
     }
 
