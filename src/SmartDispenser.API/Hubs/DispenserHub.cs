@@ -58,7 +58,8 @@ public sealed class DispenserHub(IMediator mediator, ILogger<DispenserHub> logge
 
     private async Task Apply(MachineStateEvent evt, int? inventoryCount = null, Guid? requestId = null, string? errorMessage = null)
     {
-        var dispenserId = (Guid)Context.Items[MachineIdKey]!;
+        if (!Context.Items.TryGetValue(MachineIdKey, out var id) || id is not Guid dispenserId)
+            throw new HubException("This connection is not bound to a machine.");
         try
         {
             await mediator.Send(new UpdateMachineStateCommand(dispenserId, evt, inventoryCount, requestId, errorMessage));

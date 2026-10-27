@@ -11,10 +11,16 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
 
-    public override Task<int> SaveChangesAsync(CancellationToken ct = default)
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
         AddOutboxMessagesForFinishedRequests();
-        return base.SaveChangesAsync(ct);
+        return base.SaveChanges(acceptAllChangesOnSuccess);
+    }
+
+    public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken ct = default)
+    {
+        AddOutboxMessagesForFinishedRequests();
+        return base.SaveChangesAsync(acceptAllChangesOnSuccess, ct);
     }
 
     private void AddOutboxMessagesForFinishedRequests()
