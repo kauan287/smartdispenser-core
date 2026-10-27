@@ -5,11 +5,7 @@ using SmartDispenser.Infrastructure.Data;
 
 namespace SmartDispenser.API.BackgroundServices;
 
-/// <summary>
-/// Delivers due outbox messages every few seconds. A failed delivery is retried with
-/// exponential backoff and dead-lettered after <see cref="OutboxMessage.MaxRetries"/> attempts.
-/// Delivery is at-least-once, so consumers must tolerate duplicates.
-/// </summary>
+/// <summary>Delivery is at-least-once: a consumer can see the same message twice.</summary>
 public sealed class OutboxProcessor(IServiceScopeFactory scopeFactory, ILogger<OutboxProcessor> logger) : BackgroundService
 {
     private static readonly TimeSpan PollingInterval = TimeSpan.FromSeconds(2);

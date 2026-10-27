@@ -19,10 +19,6 @@ public sealed record ProcessPaymentResult
     public static ProcessPaymentResult Fail(string err) => new() { ErrorMessage = err };
 }
 
-/// <summary>
-/// Records a payment gateway result exactly once per idempotency key. A confirmed payment
-/// dispatches the dispense request it pays for to its machine; a failed one fails the request.
-/// </summary>
 public sealed class ProcessPaymentWebhookHandler(
     IPaymentRepository paymentRepo,
     IDispenseRequestRepository requestRepo,

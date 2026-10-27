@@ -46,7 +46,6 @@ public sealed class AppFactory : WebApplicationFactory<Program>
     }
 }
 
-/// <summary>Stands in for the HealthTech Agent Orchestrator's prescription endpoint.</summary>
 public sealed class FakeOrchestrator : HttpMessageHandler
 {
     private readonly Dictionary<string, string> _sessions = new();

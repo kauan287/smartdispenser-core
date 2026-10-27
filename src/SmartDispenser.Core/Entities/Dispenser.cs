@@ -1,9 +1,5 @@
 namespace SmartDispenser.Core.Entities;
 
-/// <summary>
-/// A physical vending machine. Every state change goes through a method that checks
-/// the current state, so a machine can never dispense while offline, busy or empty.
-/// </summary>
 public sealed class Dispenser
 {
     public Guid Id { get; private set; }

@@ -2,10 +2,6 @@ using System.Text.Json;
 
 namespace SmartDispenser.Core.Entities;
 
-/// <summary>
-/// An event saved in the same transaction as the state change that produced it, then
-/// delivered by OutboxProcessor with exponential backoff until it succeeds or dead-letters.
-/// </summary>
 public sealed class OutboxMessage
 {
     public Guid Id { get; private set; }

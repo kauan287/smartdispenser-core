@@ -26,7 +26,6 @@ public enum MachineStateEvent
     ErrorReset
 }
 
-/// <summary>Applies a machine event to its dispenser and in-flight request, then broadcasts the new state.</summary>
 public sealed class UpdateMachineStateHandler(
     IDispenserRepository dispenserRepo,
     IDispenseRequestRepository requestRepo,

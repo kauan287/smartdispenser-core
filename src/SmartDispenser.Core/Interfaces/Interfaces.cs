@@ -24,10 +24,7 @@ public interface IDispenseRequestRepository
     void Add(DispenseRequest request);
 }
 
-/// <summary>
-/// Commits every change tracked in the current scope in one transaction. Repositories only
-/// load and track entities; each command decides when its changes become durable.
-/// </summary>
+/// <summary>Commits every entity tracked in the current scope in one transaction. Repositories never save.</summary>
 public interface IUnitOfWork
 {
     Task<int> SaveChangesAsync(CancellationToken ct = default);

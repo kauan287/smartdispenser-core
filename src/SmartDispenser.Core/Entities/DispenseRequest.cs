@@ -1,9 +1,5 @@
 namespace SmartDispenser.Core.Entities;
 
-/// <summary>
-/// One attempt to dispense one verified prescription:
-/// PendingPayment → Dispatched → Completed, or Failed from either non-terminal state.
-/// </summary>
 public sealed class DispenseRequest
 {
     private static readonly Dictionary<DispenseRequestStatus, DispenseRequestStatus[]> AllowedTransitions = new()

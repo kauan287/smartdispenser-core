@@ -31,11 +31,6 @@ public sealed record InitiateDispenseResult
         new() { Error = error, ErrorMessage = message };
 }
 
-/// <summary>
-/// Verifies a prescription with the HealthTech Agent Orchestrator and reserves it as a
-/// dispense request awaiting payment. Nothing is sent to the machine until the payment
-/// webhook confirms (see ProcessPaymentWebhookHandler).
-/// </summary>
 public sealed class InitiateDispenseHandler(
     IHealthTechApiClient healthTechClient,
     IDispenserRepository dispenserRepo,

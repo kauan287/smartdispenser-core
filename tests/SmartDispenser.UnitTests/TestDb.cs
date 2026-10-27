@@ -12,7 +12,6 @@ public static class TestDb
             .Options);
 }
 
-/// <summary>Simulates the database rejecting any save that writes a dispenser row.</summary>
 public sealed class FailDispenserWrites : SaveChangesInterceptor
 {
     public override ValueTask<InterceptionResult<int>> SavingChangesAsync(

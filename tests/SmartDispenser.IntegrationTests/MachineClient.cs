@@ -5,7 +5,6 @@ using Microsoft.AspNetCore.SignalR.Client;
 
 namespace SmartDispenser.IntegrationTests;
 
-/// <summary>A vending machine connected to the hub over SignalR, as the firmware would be.</summary>
 public sealed class MachineClient : IAsyncDisposable
 {
     private readonly HubConnection _connection;

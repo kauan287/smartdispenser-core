@@ -11,11 +11,13 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
 
-    /// <summary>
-    /// Writes an outbox message for every dispense request that reached Completed or Failed,
-    /// inside the same SaveChanges transaction as the status change itself.
-    /// </summary>
     public override Task<int> SaveChangesAsync(CancellationToken ct = default)
+    {
+        AddOutboxMessagesForFinishedRequests();
+        return base.SaveChangesAsync(ct);
+    }
+
+    private void AddOutboxMessagesForFinishedRequests()
     {
         var finished = ChangeTracker.Entries<DispenseRequest>()
             .Where(e => e.State == EntityState.Modified
@@ -27,8 +29,6 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         foreach (var request in finished)
             OutboxMessages.Add(OutboxMessage.Create(OutboxEvents.DispenseResult, new DispenseResultNotification(
                 request.Id, request.Status == DispenseRequestStatus.Completed, request.FailureReason)));
-
-        return base.SaveChangesAsync(ct);
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)

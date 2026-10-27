@@ -1,9 +1,5 @@
 namespace SmartDispenser.Core.Entities;
 
-/// <summary>
-/// Records a payment transaction for a dispense request.
-/// Supports idempotent processing via ExternalTransactionId.
-/// </summary>
 public sealed class Payment
 {
     public Guid Id { get; private set; }

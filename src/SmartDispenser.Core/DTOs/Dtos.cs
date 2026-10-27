@@ -2,7 +2,6 @@ using SmartDispenser.Core.Entities;
 
 namespace SmartDispenser.Core.DTOs;
 
-/// <summary>A prescription as reported by the HealthTech Agent Orchestrator.</summary>
 public sealed record PrescriptionVerificationResult
 {
     public required string PrescriptionId { get; init; }

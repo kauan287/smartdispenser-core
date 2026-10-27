@@ -6,9 +6,8 @@ using SmartDispenser.Core.Interfaces;
 namespace SmartDispenser.API.SignalR;
 
 /// <summary>
-/// Sends commands to machines through the SignalR hub and raises in-process events for the
-/// Blazor dashboard. The dashboard already runs inside this process over its own circuit,
-/// so it subscribes here instead of opening a second SignalR connection back to the server.
+/// The Blazor dashboard runs in this process, so it subscribes to these events instead of
+/// opening a SignalR client to the server's public URL, which is unreachable behind port mapping.
 /// </summary>
 public sealed class DispenserNotifier(IHubContext<DispenserHub, IMachineClient> hub) : IDispenserNotifier
 {
