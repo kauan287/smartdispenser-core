@@ -4,7 +4,7 @@ using SmartDispenser.Core.Interfaces;
 
 namespace SmartDispenser.Infrastructure.Data;
 
-public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
+public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options), IUnitOfWork
 {
     public DbSet<Dispenser> Dispensers => Set<Dispenser>();
     public DbSet<DispenseRequest> DispenseRequests => Set<DispenseRequest>();

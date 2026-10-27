@@ -28,6 +28,7 @@ public sealed class ProcessPaymentWebhookHandler(
     IDispenseRequestRepository requestRepo,
     IDispenserRepository dispenserRepo,
     IDispenserNotifier notifier,
+    IUnitOfWork unitOfWork,
     ILogger<ProcessPaymentWebhookHandler> logger)
     : IRequestHandler<ProcessPaymentWebhookCommand, ProcessPaymentResult>
 {
@@ -50,34 +51,32 @@ public sealed class ProcessPaymentWebhookHandler(
         var payment = Payment.CreateFromWebhook(
             request.Id, payload.TransactionId, payload.IdempotencyKey,
             payload.Amount, payload.Currency, payload.Provider);
+        paymentRepo.Add(payment);
 
         if (!payload.Status.Equals("confirmed", StringComparison.OrdinalIgnoreCase))
         {
             payment.Fail(payload.GatewayResponse ?? "Gateway returned failure status.");
             request.MarkFailed($"Payment failed: {payment.GatewayResponse}");
-            await paymentRepo.AddAsync(payment, ct);
-            await requestRepo.UpdateAsync(request, ct);
+            await unitOfWork.SaveChangesAsync(ct);
             return ProcessPaymentResult.Ok();
         }
 
         payment.Confirm(payload.GatewayResponse);
         request.RecordPayment(payment.Id);
-        await paymentRepo.AddAsync(payment, ct);
 
         var dispenser = await dispenserRepo.GetByIdAsync(request.DispenserId, ct);
         if (dispenser is null || !dispenser.CanDispense())
         {
             request.MarkFailed(
                 $"Dispenser was not ready when payment {payment.Id} arrived (status: {dispenser?.Status}). Refund required.");
-            await requestRepo.UpdateAsync(request, ct);
+            await unitOfWork.SaveChangesAsync(ct);
             logger.LogWarning("Paid dispense request {RequestId} could not be dispatched", request.Id);
             return ProcessPaymentResult.Ok();
         }
 
         dispenser.BeginDispensing(request.Id);
         request.MarkDispatched();
-        await dispenserRepo.UpdateAsync(dispenser, ct);
-        await requestRepo.UpdateAsync(request, ct);
+        await unitOfWork.SaveChangesAsync(ct);
 
         try
         {
@@ -91,8 +90,7 @@ public sealed class ProcessPaymentWebhookHandler(
             logger.LogError(ex, "Could not send dispense command {RequestId} to machine {DispenserId}", request.Id, dispenser.Id);
             dispenser.FailDispensing(request.Id);
             request.MarkFailed("Could not reach the machine. Refund required.");
-            await dispenserRepo.UpdateAsync(dispenser, ct);
-            await requestRepo.UpdateAsync(request, ct);
+            await unitOfWork.SaveChangesAsync(ct);
             return ProcessPaymentResult.Ok();
         }
 

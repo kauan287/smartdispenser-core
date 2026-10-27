@@ -89,7 +89,7 @@ public sealed class ProcessPaymentWebhookHandlerTests
         await using (var failing = TestDb.Create(dbName, new FailDispenserWrites()))
         {
             var handler = new ProcessPaymentWebhookHandler(new PaymentRepository(failing), new DispenseRequestRepository(failing),
-                new DispenserRepository(failing), _notifier, NullLogger<ProcessPaymentWebhookHandler>.Instance);
+                new DispenserRepository(failing), _notifier, failing, NullLogger<ProcessPaymentWebhookHandler>.Instance);
             var act = () => handler.Handle(new ProcessPaymentWebhookCommand(Payment(requestId, "TX-1", "confirmed")), CancellationToken.None);
             await act.Should().ThrowAsync<DbUpdateException>();
         }
@@ -102,7 +102,7 @@ public sealed class ProcessPaymentWebhookHandlerTests
 
     private Task<ProcessPaymentResult> Handle(PaymentWebhookPayload payload) =>
         new ProcessPaymentWebhookHandler(new PaymentRepository(_db), new DispenseRequestRepository(_db),
-            new DispenserRepository(_db), _notifier, NullLogger<ProcessPaymentWebhookHandler>.Instance)
+            new DispenserRepository(_db), _notifier, _db, NullLogger<ProcessPaymentWebhookHandler>.Instance)
             .Handle(new ProcessPaymentWebhookCommand(payload), CancellationToken.None);
 
     private static PaymentWebhookPayload Payment(Guid requestId, string transactionId, string status) => new()

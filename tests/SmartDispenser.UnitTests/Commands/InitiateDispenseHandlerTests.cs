@@ -120,7 +120,7 @@ public sealed class InitiateDispenseHandlerTests
     }
 
     private Task<InitiateDispenseResult> Handle(InitiateDispenseCommand cmd) =>
-        new InitiateDispenseHandler(_healthTech, new DispenserRepository(_db), new DispenseRequestRepository(_db),
+        new InitiateDispenseHandler(_healthTech, new DispenserRepository(_db), new DispenseRequestRepository(_db), _db,
             NullLogger<InitiateDispenseHandler>.Instance).Handle(cmd, CancellationToken.None);
 
     private async Task<Dispenser> SeedIdleDispenser()

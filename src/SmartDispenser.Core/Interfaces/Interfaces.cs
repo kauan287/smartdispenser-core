@@ -7,14 +7,13 @@ public interface IDispenserRepository
 {
     Task<Dispenser?> GetByIdAsync(Guid id, CancellationToken ct = default);
     Task<IReadOnlyList<Dispenser>> GetAllAsync(CancellationToken ct = default);
-    Task AddAsync(Dispenser dispenser, CancellationToken ct = default);
-    Task UpdateAsync(Dispenser dispenser, CancellationToken ct = default);
+    void Add(Dispenser dispenser);
 }
 
 public interface IPaymentRepository
 {
     Task<Payment?> GetByIdempotencyKeyAsync(string key, CancellationToken ct = default);
-    Task AddAsync(Payment payment, CancellationToken ct = default);
+    void Add(Payment payment);
 }
 
 public interface IDispenseRequestRepository
@@ -22,8 +21,16 @@ public interface IDispenseRequestRepository
     Task<DispenseRequest?> GetByIdAsync(Guid id, CancellationToken ct = default);
     /// <summary>True when the prescription has a dispense request that has not failed.</summary>
     Task<bool> IsPrescriptionInUseAsync(string prescriptionId, CancellationToken ct = default);
-    Task AddAsync(DispenseRequest request, CancellationToken ct = default);
-    Task UpdateAsync(DispenseRequest request, CancellationToken ct = default);
+    void Add(DispenseRequest request);
+}
+
+/// <summary>
+/// Commits every change tracked in the current scope in one transaction. Repositories only
+/// load and track entities; each command decides when its changes become durable.
+/// </summary>
+public interface IUnitOfWork
+{
+    Task<int> SaveChangesAsync(CancellationToken ct = default);
 }
 
 /// <summary>Pushes commands to machines and state changes to dashboards.</summary>

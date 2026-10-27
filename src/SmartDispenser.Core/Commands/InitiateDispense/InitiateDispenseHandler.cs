@@ -40,6 +40,7 @@ public sealed class InitiateDispenseHandler(
     IHealthTechApiClient healthTechClient,
     IDispenserRepository dispenserRepo,
     IDispenseRequestRepository requestRepo,
+    IUnitOfWork unitOfWork,
     ILogger<InitiateDispenseHandler> logger)
     : IRequestHandler<InitiateDispenseCommand, InitiateDispenseResult>
 {
@@ -73,7 +74,8 @@ public sealed class InitiateDispenseHandler(
             return Reject($"Prescription '{cmd.PrescriptionId}' already has a dispense request.");
 
         var request = DispenseRequest.Create(cmd.DispenserId, cmd.PrescriptionId, cmd.PatientIdentifier, medication, dosage);
-        await requestRepo.AddAsync(request, ct);
+        requestRepo.Add(request);
+        await unitOfWork.SaveChangesAsync(ct);
 
         logger.LogInformation("Dispense request {RequestId} awaiting payment", request.Id);
         return InitiateDispenseResult.Ok(request.Id);

@@ -31,6 +31,7 @@ public sealed class UpdateMachineStateHandler(
     IDispenserRepository dispenserRepo,
     IDispenseRequestRepository requestRepo,
     IDispenserNotifier notifier,
+    IUnitOfWork unitOfWork,
     ILogger<UpdateMachineStateHandler> logger)
     : IRequestHandler<UpdateMachineStateCommand, Unit>
 {
@@ -81,7 +82,7 @@ public sealed class UpdateMachineStateHandler(
                 break;
         }
 
-        await dispenserRepo.UpdateAsync(dispenser, ct);
+        await unitOfWork.SaveChangesAsync(ct);
         await notifier.PublishStateAsync(DispenserStateDto.From(dispenser), ct);
         return Unit.Value;
 
@@ -94,6 +95,5 @@ public sealed class UpdateMachineStateHandler(
         var request = await requestRepo.GetByIdAsync(requestId, ct)
             ?? throw new InvalidOperationException($"Dispense request {requestId} not found.");
         transition(request);
-        await requestRepo.UpdateAsync(request, ct);
     }
 }

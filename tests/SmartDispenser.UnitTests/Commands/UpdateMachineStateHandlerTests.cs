@@ -38,6 +38,7 @@ public sealed class UpdateMachineStateHandlerTests
             new DispenserRepository(_db),
             new DispenseRequestRepository(_db),
             new RecordingNotifier(),
+            _db,
             NullLogger<UpdateMachineStateHandler>.Instance).Handle(cmd, CancellationToken.None);
 
     private async Task<(Dispenser, DispenseRequest)> SeedDispensing(int inventory)

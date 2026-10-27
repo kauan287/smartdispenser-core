@@ -11,7 +11,7 @@ namespace SmartDispenser.API.Controllers;
 [ApiController]
 [Route("api/dispensers")]
 [Produces("application/json")]
-public sealed class DispensersController(IMediator mediator, IDispenserRepository dispenserRepo) : ControllerBase
+public sealed class DispensersController(IMediator mediator, IDispenserRepository dispenserRepo, IUnitOfWork unitOfWork) : ControllerBase
 {
     /// <summary>List all registered machines with their current state.</summary>
     [HttpGet]
@@ -33,7 +33,8 @@ public sealed class DispensersController(IMediator mediator, IDispenserRepositor
     public async Task<IActionResult> Register([FromBody] RegisterDispenserRequest request, CancellationToken ct)
     {
         var dispenser = Dispenser.Create(request.Name, request.Location, request.InventoryCapacity);
-        await dispenserRepo.AddAsync(dispenser, ct);
+        dispenserRepo.Add(dispenser);
+        await unitOfWork.SaveChangesAsync(ct);
         return CreatedAtAction(nameof(GetById), new { id = dispenser.Id }, DispenserStateDto.From(dispenser));
     }
 

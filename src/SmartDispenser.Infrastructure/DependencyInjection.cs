@@ -29,6 +29,7 @@ public static class DependencyInjection
                 $"Database:Provider must be '{DatabaseProvider.Postgres}' or '{DatabaseProvider.InMemory}', got '{provider}'."),
         };
         services.AddDbContext<AppDbContext>(configureDb);
+        services.AddScoped<IUnitOfWork>(sp => sp.GetRequiredService<AppDbContext>());
 
         services.AddScoped<IDispenserRepository, DispenserRepository>();
         services.AddScoped<IPaymentRepository, PaymentRepository>();
