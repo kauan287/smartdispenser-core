@@ -20,13 +20,15 @@ public sealed class AppFactory : WebApplicationFactory<Program>
 
     public FakeOrchestrator Orchestrator { get; } = new();
 
+    public static bool UsesPostgres => Environment.GetEnvironmentVariable("TEST_POSTGRES_CONNECTION") is not null;
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Development");
-        if (Environment.GetEnvironmentVariable("TEST_POSTGRES_CONNECTION") is { } postgres)
+        if (UsesPostgres)
         {
             builder.UseSetting("Database:Provider", "Postgres");
-            builder.UseSetting("ConnectionStrings:DefaultConnection", postgres);
+            builder.UseSetting("ConnectionStrings:DefaultConnection", Environment.GetEnvironmentVariable("TEST_POSTGRES_CONNECTION"));
         }
         builder.ConfigureTestServices(services =>
             services.AddHttpClient<IHealthTechApiClient, HealthTechApiClient>()
