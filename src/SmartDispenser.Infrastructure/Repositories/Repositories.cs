@@ -31,18 +31,9 @@ public sealed class PaymentRepository(AppDbContext db) : IPaymentRepository
     public Task<Payment?> GetByIdempotencyKeyAsync(string key, CancellationToken ct = default) =>
         db.Payments.FirstOrDefaultAsync(p => p.IdempotencyKey == key, ct);
 
-    public Task<Payment?> GetByExternalTransactionIdAsync(string externalId, CancellationToken ct = default) =>
-        db.Payments.FirstOrDefaultAsync(p => p.ExternalTransactionId == externalId, ct);
-
     public async Task AddAsync(Payment payment, CancellationToken ct = default)
     {
         db.Payments.Add(payment);
-        await db.SaveChangesAsync(ct);
-    }
-
-    public async Task UpdateAsync(Payment payment, CancellationToken ct = default)
-    {
-        db.Payments.Update(payment);
         await db.SaveChangesAsync(ct);
     }
 }
@@ -51,12 +42,6 @@ public sealed class DispenseRequestRepository(AppDbContext db) : IDispenseReques
 {
     public Task<DispenseRequest?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
         db.DispenseRequests.FirstOrDefaultAsync(r => r.Id == id, ct);
-
-    public async Task<IReadOnlyList<DispenseRequest>> GetRecentAsync(int count = 50, CancellationToken ct = default) =>
-        await db.DispenseRequests
-            .OrderByDescending(r => r.CreatedAt)
-            .Take(count)
-            .ToListAsync(ct);
 
     public async Task AddAsync(DispenseRequest request, CancellationToken ct = default)
     {

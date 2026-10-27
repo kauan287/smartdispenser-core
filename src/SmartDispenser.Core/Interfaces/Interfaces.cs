@@ -14,15 +14,12 @@ public interface IDispenserRepository
 public interface IPaymentRepository
 {
     Task<Payment?> GetByIdempotencyKeyAsync(string key, CancellationToken ct = default);
-    Task<Payment?> GetByExternalTransactionIdAsync(string externalId, CancellationToken ct = default);
     Task AddAsync(Payment payment, CancellationToken ct = default);
-    Task UpdateAsync(Payment payment, CancellationToken ct = default);
 }
 
 public interface IDispenseRequestRepository
 {
     Task<DispenseRequest?> GetByIdAsync(Guid id, CancellationToken ct = default);
-    Task<IReadOnlyList<DispenseRequest>> GetRecentAsync(int count = 50, CancellationToken ct = default);
     Task AddAsync(DispenseRequest request, CancellationToken ct = default);
     Task UpdateAsync(DispenseRequest request, CancellationToken ct = default);
 }

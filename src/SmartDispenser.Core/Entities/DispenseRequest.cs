@@ -19,9 +19,6 @@ public sealed class DispenseRequest
     public DateTimeOffset UpdatedAt { get; private set; }
     public DateTimeOffset? CompletedAt { get; private set; }
 
-    // Correlation ID for distributed tracing across services
-    public string CorrelationId { get; private set; } = string.Empty;
-
     private DispenseRequest() { }
 
     public static DispenseRequest Create(
@@ -29,8 +26,7 @@ public sealed class DispenseRequest
         string prescriptionId,
         string patientIdentifier,
         string medication,
-        string dosage,
-        string? correlationId = null)
+        string dosage)
     {
         return new DispenseRequest
         {
@@ -43,7 +39,6 @@ public sealed class DispenseRequest
             Status = DispenseRequestStatus.PendingVerification,
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow,
-            CorrelationId = correlationId ?? Guid.NewGuid().ToString("N"),
         };
     }
 

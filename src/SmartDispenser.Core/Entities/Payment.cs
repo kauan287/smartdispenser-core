@@ -56,12 +56,4 @@ public sealed class Payment
         GatewayResponse = reason;
         UpdatedAt = DateTimeOffset.UtcNow;
     }
-
-    public void Refund()
-    {
-        if (Status != PaymentStatus.Confirmed)
-            throw new InvalidOperationException("Only confirmed payments can be refunded.");
-        Status = PaymentStatus.Refunded;
-        UpdatedAt = DateTimeOffset.UtcNow;
-    }
 }

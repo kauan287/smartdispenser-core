@@ -47,7 +47,6 @@ public sealed class AppDbContext : DbContext
                 .HasConversion<string>()
                 .HasMaxLength(40);
             e.Property(r => r.FailureReason).HasMaxLength(500);
-            e.Property(r => r.CorrelationId).HasMaxLength(50);
 
             e.HasIndex(r => r.PrescriptionId);
             e.HasIndex(r => r.Status);

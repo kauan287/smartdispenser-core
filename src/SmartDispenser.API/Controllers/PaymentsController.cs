@@ -63,19 +63,4 @@ public sealed class PaymentsController : ControllerBase
         // Always return 200 to the gateway provider
         return Ok(new { received = true, duplicate = result.WasDuplicate });
     }
-
-    /// <summary>List recent transactions (for dashboard).</summary>
-    [HttpGet("recent")]
-    [ProducesResponseType(typeof(IReadOnlyList<PaymentSummary>), StatusCodes.Status200OK)]
-    public IActionResult GetRecent() =>
-        Ok(Array.Empty<PaymentSummary>()); // TODO: wire up repository query
-
-    public sealed record PaymentSummary(
-        Guid Id,
-        string ExternalTransactionId,
-        decimal Amount,
-        string Currency,
-        string Status,
-        string Provider,
-        DateTimeOffset CreatedAt);
 }
