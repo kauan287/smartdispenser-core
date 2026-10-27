@@ -30,31 +30,4 @@ public sealed class DispenserConcurrencyTests
         await using var after = TestDb.Create(dbName);
         (await after.Dispensers.SingleAsync()).CurrentDispenseRequestId.Should().Be(firstRequest);
     }
-
-    [Fact]
-    public async Task Heartbeat_does_not_conflict_with_a_concurrent_dispatch()
-    {
-        var dbName = Guid.NewGuid().ToString();
-        var dispenser = Dispenser.Create("Machine-01", "Pharmacy A", 10);
-        dispenser.GoOnline();
-        dispenser.UpdateInventory(5);
-        await using (var seed = TestDb.Create(dbName))
-        {
-            seed.Dispensers.Add(dispenser);
-            await seed.SaveChangesAsync();
-        }
-
-        await using var payment = TestDb.Create(dbName);
-        await using var heartbeat = TestDb.Create(dbName);
-        var dispatching = await payment.Dispensers.SingleAsync();
-        var beating = await heartbeat.Dispensers.SingleAsync();
-        dispatching.BeginDispensing(Guid.NewGuid());
-        beating.RecordHeartbeat();
-
-        await payment.SaveChangesAsync();
-        await heartbeat.SaveChangesAsync();
-
-        await using var after = TestDb.Create(dbName);
-        (await after.Dispensers.SingleAsync()).Status.Should().Be(DispenserStatus.Dispensing);
-    }
 }

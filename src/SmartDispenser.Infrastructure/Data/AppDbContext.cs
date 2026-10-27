@@ -44,6 +44,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
                 .HasConversion<string>()
                 .HasMaxLength(30);
             e.Property(d => d.FirmwareVersion).HasMaxLength(50);
+            e.Property(d => d.Version).IsConcurrencyToken();
 
             e.HasIndex(d => d.Status);
             e.HasIndex(d => d.LastHeartbeatAt);

@@ -19,6 +19,9 @@ public sealed class Dispenser
     public DateTimeOffset CreatedAt { get; private set; }
     public DateTimeOffset UpdatedAt { get; private set; }
 
+    /// <summary>Optimistic concurrency token: two writers that loaded the same version cannot both save.</summary>
+    public int Version { get; private set; }
+
     private Dispenser() { }
 
     public static Dispenser Create(string name, string location, int inventoryCapacity)
@@ -85,8 +88,7 @@ public sealed class Dispenser
     public void RecordHeartbeat()
     {
         LastHeartbeatAt = DateTimeOffset.UtcNow;
-        if (Status == DispenserStatus.Offline)
-            SetStatus(ReadyStatus);
+        SetStatus(Status == DispenserStatus.Offline ? ReadyStatus : Status);
     }
 
     public void GoOffline()
@@ -100,8 +102,7 @@ public sealed class Dispenser
         ArgumentOutOfRangeException.ThrowIfNegative(count);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(count, InventoryCapacity);
         InventoryCount = count;
-        if (Status is DispenserStatus.Idle or DispenserStatus.InventoryEmpty)
-            SetStatus(ReadyStatus);
+        SetStatus(Status is DispenserStatus.Idle or DispenserStatus.InventoryEmpty ? ReadyStatus : Status);
     }
 
     private DispenserStatus ReadyStatus => InventoryCount == 0 ? DispenserStatus.InventoryEmpty : DispenserStatus.Idle;
@@ -110,6 +111,7 @@ public sealed class Dispenser
     {
         Status = status;
         UpdatedAt = DateTimeOffset.UtcNow;
+        Version++;
     }
 
     private void EnsureStatus(DispenserStatus expected, string operation)
