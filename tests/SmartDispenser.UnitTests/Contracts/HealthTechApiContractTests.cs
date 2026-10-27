@@ -67,6 +67,22 @@ public sealed class HealthTechApiContractTests
     }
 
     [Fact]
+    public async Task Tampered_audit_chain_is_reported_before_any_other_gate()
+    {
+        var invalid = """
+            {"thread_id":"session-RX-9","prescription_id":"RX-9","proposed_medication":null,"dosage":null,
+             "safety_approved":false,"risk_notes":null,"human_approved":null,"doctor_comments":null,
+             "is_paused_waiting_approval":false,"audit_chain_valid":false,"status":"INVALID"}
+            """;
+        var (client, _) = Client(HttpStatusCode.OK, invalid);
+
+        var result = await client.VerifyPrescriptionAsync("RX-9");
+
+        result!.AuditChainValid.Should().BeFalse();
+        result.RejectionReason.Should().Be("Audit chain integrity check failed: possible data tampering.");
+    }
+
+    [Fact]
     public async Task Missing_approval_field_fails_closed()
     {
         var withoutAuditFlag = """

@@ -31,6 +31,7 @@ public sealed class InitiateDispenseHandlerTests
     [InlineData("unapproved", "Doctor has not approved this prescription.")]
     [InlineData("unsafe", "Safety agent flagged an issue: Penicillin allergy")]
     [InlineData("tampered", "Audit chain integrity check failed: possible data tampering.")]
+    [InlineData("tampered-and-pending", "Audit chain integrity check failed: possible data tampering.")]
     [InlineData("no-dosage", "Prescription has no medication or dosage.")]
     public async Task Prescription_failing_a_gate_is_rejected_and_nothing_is_reserved(string variant, string expectedReason)
     {
@@ -42,6 +43,7 @@ public sealed class InitiateDispenseHandlerTests
             "unapproved" => approved with { IsApproved = false },
             "unsafe" => approved with { SafetyApproved = false, RiskNotes = "Penicillin allergy" },
             "tampered" => approved with { AuditChainValid = false },
+            "tampered-and-pending" => approved with { AuditChainValid = false, IsApproved = false, IsPendingApproval = true, SafetyApproved = false },
             "no-dosage" => approved with { Dosage = null },
             _ => throw new ArgumentOutOfRangeException(nameof(variant)),
         });
