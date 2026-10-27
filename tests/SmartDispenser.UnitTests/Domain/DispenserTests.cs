@@ -59,4 +59,33 @@ public sealed class DispenserTests
         act.Should().Throw<InvalidOperationException>()
             .WithMessage("Cannot begin dispensing: dispenser 'Machine-01' is in state 'Offline' (expected 'Idle').");
     }
+
+    [Fact]
+    public void Restocking_an_empty_dispenser_makes_it_available_again()
+    {
+        var d = Dispenser.Create("Machine-01", "Floor 1", 50);
+        d.GoOnline();
+        d.UpdateInventory(0);
+        d.Status.Should().Be(DispenserStatus.InventoryEmpty);
+
+        d.UpdateInventory(5);
+
+        d.Status.Should().Be(DispenserStatus.Idle);
+        d.CanDispense().Should().BeTrue();
+    }
+
+    [Fact]
+    public void Dispensing_the_last_unit_leaves_the_dispenser_empty()
+    {
+        var d = Dispenser.Create("Machine-01", "Floor 1", 50);
+        d.GoOnline();
+        d.UpdateInventory(1);
+        var requestId = Guid.NewGuid();
+        d.BeginDispensing(requestId);
+
+        d.CompleteDispensing();
+
+        d.InventoryCount.Should().Be(0);
+        d.Status.Should().Be(DispenserStatus.InventoryEmpty);
+    }
 }
