@@ -15,12 +15,13 @@ SmartDispenser Core is an ASP.NET Core 10 backend for a network of pharmaceutica
 
 A machine dispenses only when all of these hold:
 
-1. The orchestrator knows the prescription and it proposes a medication and a dosage.
-2. The safety agent approved it (`safety_approved`).
+1. The orchestrator knows the prescription.
+2. The orchestrator's audit chain is intact (`audit_chain_valid`). This is checked first, so a tampered record reports the audit failure rather than a missing approval.
 3. A doctor approved it and the session is not paused waiting for approval (`human_approved`, `is_paused_waiting_approval`).
-4. The orchestrator's audit chain is intact (`audit_chain_valid`).
-5. The prescription has no other dispense request that is pending, dispatched, or completed.
-6. The payment gateway confirmed payment in a webhook whose HMAC-SHA256 signature is valid.
+4. The safety agent approved it (`safety_approved`).
+5. It proposes a medication and a dosage.
+6. The prescription has no other dispense request that is pending, dispatched, or completed.
+7. The payment gateway confirmed payment in a webhook whose HMAC-SHA256 signature is valid.
 
 ## Quick start
 
@@ -111,6 +112,7 @@ sequenceDiagram
 ### Consistency
 
 - **One transaction per command.** Repositories only load and track entities. Each handler calls `IUnitOfWork.SaveChangesAsync` once, so the payment, the request, the dispenser, and the outbox message commit together or not at all.
+- **One live request per prescription.** The handler checks first, and a unique index on `DispenseRequests.PrescriptionId`, filtered to rows whose status is not `Failed`, rejects a concurrent second reservation.
 - **Idempotent webhooks.** A repeated idempotency key answers `{"received":true,"duplicate":true}` and changes nothing. A unique index on `Payments.IdempotencyKey` rejects a concurrent duplicate.
 - **Optimistic concurrency.** `Dispenser.Version` is a concurrency token that every state or stock change increments. If two commands race for one machine, the second save fails and rolls back, so a machine never receives two dispense commands.
 - **Transactional outbox.** When a dispense request reaches `Completed` or `Failed`, `AppDbContext.SaveChangesAsync` adds an `OutboxMessage` in the same transaction. `OutboxProcessor` polls every 2 seconds and publishes due messages to the dashboard. A failed delivery is retried after 5, 25, 125, and 625 seconds and is marked `DeadLetter` after the fifth failure.
@@ -205,7 +207,7 @@ A machine connects to `/hubs/dispensers?machineId={dispenser-id}`. Each call it 
 }
 ```
 
-`HealthTechApiContractTests` deserializes this shape from a literal sample. A missing boolean reads as `false`, so a dropped approval field rejects the dispense rather than allowing it.
+`HealthTechApiContractTests` deserializes this shape from literal samples, including the orchestrator's tampered response (`audit_chain_valid: false`, clinical fields `null`, `"status": "INVALID"`). The client ignores `status` and other fields it does not read. A missing boolean reads as `false`, so a dropped approval field rejects the dispense rather than allowing it.
 
 ## Testing
 
@@ -213,8 +215,8 @@ A machine connects to `/hubs/dispensers?machineId={dispenser-id}`. Each call it 
 dotnet test SmartDispenser.sln
 ```
 
-- **Unit tests** (50) cover the state machines, the outbox backoff, the HMAC middleware against a signature computed with `openssl`, and the three handlers. The handlers run on the real repositories over the in-memory provider. Separate tests cover a partial-save failure and a concurrent write to one machine.
-- **Integration tests** (7) host the API with `WebApplicationFactory`, connect a SignalR client as the machine, and stub the orchestrator's HTTP responses. They cover the full flow from reservation through payment and confirmation to the dashboard, plus replayed webhooks, unsigned webhooks, prescription reuse, unknown prescriptions, and the rate limit.
+- **Unit tests** (54) cover the state machines, the outbox backoff, the HMAC middleware against a signature computed with `openssl`, and the three handlers. The handlers run on the real repositories over the in-memory provider. Separate tests cover a partial-save failure and a concurrent write to one machine.
+- **Integration tests** (9) host the API with `WebApplicationFactory`, connect a SignalR client as the machine, and stub the orchestrator's HTTP responses. They cover the full flow from reservation through payment and confirmation to the dashboard, plus replayed webhooks, unsigned webhooks, prescription reuse, unknown prescriptions, and the rate limit. Two of them check the database unique index and run only on PostgreSQL.
 
 To run the integration tests on PostgreSQL, start the Compose database and run `make test-postgres`. CI runs them on InMemory and on a PostgreSQL 16 service container.
 
