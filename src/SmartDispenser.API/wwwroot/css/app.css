@@ -78,16 +78,6 @@ main { padding: 32px 28px; max-width: 1200px; margin: 0 auto; }
 }
 .subtitle { color: var(--text-muted); font-size: 13px; }
 
-/* ── Status dot ───────────────────────────────────────────────────────── */
-.status-dot {
-    width: 10px; height: 10px;
-    border-radius: 50%;
-    display: inline-block;
-    flex-shrink: 0;
-}
-.status-dot.online  { background: var(--green); box-shadow: 0 0 8px var(--green); }
-.status-dot.offline { background: var(--red); }
-
 /* ── Machine grid ─────────────────────────────────────────────────────── */
 .machine-grid {
     display: grid;
@@ -204,16 +194,6 @@ main { padding: 32px 28px; max-width: 1200px; margin: 0 auto; }
     padding: 80px 20px;
     color: var(--text-muted);
 }
-
-.spinner {
-    width: 36px; height: 36px;
-    border: 3px solid var(--border);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-}
-
-@keyframes spin { to { transform: rotate(360deg); } }
 
 /* ── Event feed ───────────────────────────────────────────────────────── */
 .event-feed h2 {

@@ -43,6 +43,9 @@ public sealed class DispenseRequestRepository(AppDbContext db) : IDispenseReques
     public Task<DispenseRequest?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
         db.DispenseRequests.FirstOrDefaultAsync(r => r.Id == id, ct);
 
+    public Task<bool> IsPrescriptionInUseAsync(string prescriptionId, CancellationToken ct = default) =>
+        db.DispenseRequests.AnyAsync(r => r.PrescriptionId == prescriptionId && r.Status != DispenseRequestStatus.Failed, ct);
+
     public async Task AddAsync(DispenseRequest request, CancellationToken ct = default)
     {
         db.DispenseRequests.Add(request);

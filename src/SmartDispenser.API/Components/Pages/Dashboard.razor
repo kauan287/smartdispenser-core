@@ -1,18 +1,16 @@
 @page "/dashboard"
 @rendermode InteractiveServer
-@using Microsoft.AspNetCore.SignalR.Client
-@using SmartDispenser.Core.DTOs
-@implements IAsyncDisposable
+@using SmartDispenser.API.SignalR
+@implements IDisposable
+@inject IDispenserRepository DispenserRepository
+@inject DispenserNotifier Notifier
 
-<PageTitle>SmartDispenser — Dashboard</PageTitle>
+<PageTitle>SmartDispenser Dashboard</PageTitle>
 
 <div class="dashboard-header">
-    <h1>
-        <span class="status-dot @(_hubConnected ? "online" : "offline")"></span>
-        Machine Dashboard
-    </h1>
+    <h1>Machine Dashboard</h1>
     <p class="subtitle">
-        @_machines.Count(m => m.IsOnline) of @_machines.Count machines online &bull;
+        @_machines.Values.Count(m => m.IsOnline) of @_machines.Count machines online &bull;
         Last updated: @_lastUpdated.ToString("HH:mm:ss")
     </p>
 </div>
@@ -20,41 +18,40 @@
 @if (_machines.Count == 0)
 {
     <div class="empty-state">
-        <div class="spinner"></div>
-        <p>Connecting to machines&hellip;</p>
+        <p>No machines registered yet. Register one with <code>POST /api/dispensers</code>.</p>
     </div>
 }
 else
 {
     <div class="machine-grid">
-        @foreach (var machine in _machines.OrderBy(m => m.Name))
+        @foreach (var machine in _machines.Values.OrderBy(m => m.Name))
         {
-            <div class="machine-card @GetStatusClass(machine.Status)">
+            <div class="machine-card @StatusClass(machine.Status)">
                 <div class="machine-header">
                     <span class="machine-name">@machine.Name</span>
-                    <span class="status-badge @GetStatusClass(machine.Status)">@machine.Status</span>
+                    <span class="status-badge @StatusClass(machine.Status)">@machine.Status</span>
                 </div>
-                <div class="machine-location">📍 @machine.Location</div>
+                <div class="machine-location">@machine.Location</div>
                 <div class="inventory-bar-container">
                     <div class="inventory-label">
                         <span>Inventory</span>
                         <span>@machine.InventoryCount / @machine.InventoryCapacity</span>
                     </div>
                     <div class="inventory-bar">
-                        <div class="inventory-fill @GetInventoryClass(machine.InventoryPercentage)"
-                             style="width: @machine.InventoryPercentage%">
+                        <div class="inventory-fill @InventoryClass(machine.InventoryPercentage)"
+                             style="width: @(machine.InventoryPercentage.ToString(System.Globalization.CultureInfo.InvariantCulture))%">
                         </div>
                     </div>
                 </div>
                 <div class="machine-meta">
-                    <span title="Last heartbeat">🫀 @FormatRelative(machine.LastHeartbeatAt)</span>
-                    @if (machine.LastDispenseAt.HasValue)
+                    <span>Heartbeat @FormatRelative(machine.LastHeartbeatAt)</span>
+                    @if (machine.LastDispenseAt is { } lastDispense)
                     {
-                        <span title="Last dispense">💊 @FormatRelative(machine.LastDispenseAt.Value)</span>
+                        <span>Last dispense @FormatRelative(lastDispense)</span>
                     }
                     @if (machine.FirmwareVersion is not null)
                     {
-                        <span title="Firmware">🔧 @machine.FirmwareVersion</span>
+                        <span>Firmware @machine.FirmwareVersion</span>
                     }
                 </div>
             </div>
@@ -62,16 +59,15 @@ else
     </div>
 }
 
-@if (_recentEvents.Count > 0)
+@if (_events.Count > 0)
 {
     <div class="event-feed">
         <h2>Live Event Feed</h2>
         <div class="event-list">
-            @foreach (var evt in _recentEvents.Take(10))
+            @foreach (var evt in _events)
             {
-                <div class="event-item @evt.Type">
+                <div class="event-item @evt.Kind">
                     <span class="event-time">@evt.At.ToString("HH:mm:ss")</span>
-                    <span class="event-icon">@GetEventIcon(evt.Type)</span>
                     <span class="event-message">@evt.Message</span>
                 </div>
             }
@@ -80,94 +76,71 @@ else
 }
 
 @code {
-    private HubConnection? _hubConnection;
-    private readonly List<DispenserStateDto> _machines = [];
-    private readonly List<DashboardEvent> _recentEvents = [];
-    private bool _hubConnected;
-    private DateTimeOffset _lastUpdated = DateTimeOffset.UtcNow;
+    private const int MaxEvents = 10;
 
-    [Inject] private NavigationManager Nav { get; set; } = default!;
+    private readonly Dictionary<Guid, DispenserStateDto> _machines = [];
+    private readonly List<DashboardEvent> _events = [];
+    private DateTimeOffset _lastUpdated = DateTimeOffset.UtcNow;
 
     protected override async Task OnInitializedAsync()
     {
-        _hubConnection = new HubConnectionBuilder()
-            .WithUrl(Nav.ToAbsoluteUri("/hubs/dispensers?role=dashboard"))
-            .WithAutomaticReconnect([TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(15)])
-            .Build();
+        foreach (var dispenser in await DispenserRepository.GetAllAsync())
+            _machines[dispenser.Id] = DispenserStateDto.From(dispenser);
 
-        _hubConnection.On<DispenserStateDto>("MachineStateUpdated", state =>
-        {
-            var existing = _machines.FindIndex(m => m.Id == state.Id);
-            if (existing >= 0) _machines[existing] = state;
-            else _machines.Add(state);
-
-            _recentEvents.Insert(0, new(
-                state.Status == "Offline" ? "offline" : "info",
-                DateTimeOffset.UtcNow,
-                $"{state.Name} → {state.Status} (inventory: {state.InventoryCount}/{state.InventoryCapacity})"
-            ));
-
-            _lastUpdated = DateTimeOffset.UtcNow;
-            InvokeAsync(StateHasChanged);
-        });
-
-        _hubConnection.On<DispenseResultNotification>("DispenseResultReceived", result =>
-        {
-            _recentEvents.Insert(0, new(
-                result.Success ? "success" : "error",
-                DateTimeOffset.UtcNow,
-                result.Success
-                    ? $"✅ Dispense {result.RequestId.ToString()[..8]}… completed"
-                    : $"❌ Dispense {result.RequestId.ToString()[..8]}… failed: {result.ErrorMessage}"
-            ));
-            InvokeAsync(StateHasChanged);
-        });
-
-        _hubConnection.Reconnected += _ => { _hubConnected = true; return InvokeAsync(StateHasChanged); };
-        _hubConnection.Reconnecting += _ => { _hubConnected = false; return InvokeAsync(StateHasChanged); };
-        _hubConnection.Closed += _ => { _hubConnected = false; return InvokeAsync(StateHasChanged); };
-
-        await _hubConnection.StartAsync();
-        _hubConnected = true;
+        Notifier.StateChanged += OnStateChanged;
+        Notifier.DispenseResultPublished += OnDispenseResult;
     }
 
-    private static string GetStatusClass(string status) => status switch
+    private void OnStateChanged(DispenserStateDto state) => InvokeAsync(() =>
+    {
+        _machines[state.Id] = state;
+        AddEvent(state.IsOnline ? "info" : "offline",
+            $"{state.Name}: {state.Status} (inventory {state.InventoryCount}/{state.InventoryCapacity})");
+    });
+
+    private void OnDispenseResult(DispenseResultNotification result) => InvokeAsync(() =>
+        AddEvent(result.Success ? "success" : "error", result.Success
+            ? $"Dispense {result.RequestId.ToString()[..8]} completed"
+            : $"Dispense {result.RequestId.ToString()[..8]} failed: {result.ErrorMessage}"));
+
+    private void AddEvent(string kind, string message)
+    {
+        _lastUpdated = DateTimeOffset.UtcNow;
+        _events.Insert(0, new(kind, _lastUpdated, message));
+        if (_events.Count > MaxEvents)
+            _events.RemoveAt(MaxEvents);
+        StateHasChanged();
+    }
+
+    private static string StatusClass(string status) => status switch
     {
         "Idle" => "status-idle",
         "Dispensing" => "status-dispensing",
         "Error" => "status-error",
         "InventoryEmpty" => "status-empty",
-        _ => "status-offline"
+        _ => "status-offline",
     };
 
-    private static string GetInventoryClass(double pct) => pct switch
+    private static string InventoryClass(double pct) => pct switch
     {
         > 50 => "inventory-good",
         > 20 => "inventory-warn",
-        _ => "inventory-low"
+        _ => "inventory-low",
     };
 
-    private static string GetEventIcon(string type) => type switch
+    private static string FormatRelative(DateTimeOffset at)
     {
-        "success" => "✅",
-        "error" => "❌",
-        "offline" => "🔴",
-        _ => "ℹ️"
-    };
-
-    private static string FormatRelative(DateTimeOffset dt)
-    {
-        var elapsed = DateTimeOffset.UtcNow - dt;
+        var elapsed = DateTimeOffset.UtcNow - at;
         return elapsed.TotalMinutes < 1 ? $"{(int)elapsed.TotalSeconds}s ago"
              : elapsed.TotalHours < 1 ? $"{(int)elapsed.TotalMinutes}m ago"
              : $"{(int)elapsed.TotalHours}h ago";
     }
 
-    public async ValueTask DisposeAsync()
+    public void Dispose()
     {
-        if (_hubConnection is not null)
-            await _hubConnection.DisposeAsync();
+        Notifier.StateChanged -= OnStateChanged;
+        Notifier.DispenseResultPublished -= OnDispenseResult;
     }
 
-    private sealed record DashboardEvent(string Type, DateTimeOffset At, string Message);
+    private sealed record DashboardEvent(string Kind, DateTimeOffset At, string Message);
 }

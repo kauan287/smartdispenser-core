@@ -44,7 +44,8 @@ builder.Services.AddSignalR(opts =>
     opts.ClientTimeoutInterval = TimeSpan.FromSeconds(60);
     opts.KeepAliveInterval = TimeSpan.FromSeconds(15);
 });
-builder.Services.AddScoped<IDispenserHubContext, DispenserHubContext>();
+builder.Services.AddSingleton<DispenserNotifier>();
+builder.Services.AddSingleton<IDispenserNotifier>(sp => sp.GetRequiredService<DispenserNotifier>());
 
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 

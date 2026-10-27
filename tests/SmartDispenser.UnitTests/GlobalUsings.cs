@@ -1,11 +1,8 @@
-global using Xunit;
-global using Moq;
-global using FluentAssertions;
-global using System.Security.Cryptography;
 global using System.Text;
-global using SmartDispenser.Core.Entities;
-global using SmartDispenser.Core.DTOs;
-global using SmartDispenser.Core.Interfaces;
-global using SmartDispenser.Core.Commands.InitiateDispense;
-global using MediatR;
+global using FluentAssertions;
+global using Microsoft.EntityFrameworkCore;
 global using Microsoft.Extensions.Logging.Abstractions;
+global using SmartDispenser.Core.DTOs;
+global using SmartDispenser.Core.Entities;
+global using SmartDispenser.Core.Interfaces;
+global using Xunit;

@@ -20,36 +20,25 @@ public interface IPaymentRepository
 public interface IDispenseRequestRepository
 {
     Task<DispenseRequest?> GetByIdAsync(Guid id, CancellationToken ct = default);
+    /// <summary>True when the prescription has a dispense request that has not failed.</summary>
+    Task<bool> IsPrescriptionInUseAsync(string prescriptionId, CancellationToken ct = default);
     Task AddAsync(DispenseRequest request, CancellationToken ct = default);
     Task UpdateAsync(DispenseRequest request, CancellationToken ct = default);
 }
 
-/// <summary>
-/// Typed SignalR hub proxy — decouples business logic from SignalR infrastructure.
-/// </summary>
-public interface IDispenserHubContext
+/// <summary>Pushes commands to machines and state changes to dashboards.</summary>
+public interface IDispenserNotifier
 {
-    Task SendCommandAsync(Guid dispenserId, DispenserCommand command, CancellationToken ct = default);
-    Task BroadcastStateUpdateAsync(DispenserStateDto state, CancellationToken ct = default);
-    Task NotifyDispenseResultAsync(Guid dispenserId, DispenseResultNotification result, CancellationToken ct = default);
+    Task SendDispenseCommandAsync(Guid dispenserId, DispenseCommand command, CancellationToken ct = default);
+    Task PublishStateAsync(DispenserStateDto state, CancellationToken ct = default);
+    Task PublishDispenseResultAsync(DispenseResultNotification result, CancellationToken ct = default);
 }
 
-/// <summary>HTTP client abstraction for the HealthTech Agent Orchestrator API.</summary>
 public interface IHealthTechApiClient
 {
-    Task<PrescriptionVerificationResult> VerifyPrescriptionAsync(
-        string prescriptionId, CancellationToken ct = default);
+    /// <returns>The prescription, or null when the orchestrator does not know it.</returns>
+    Task<PrescriptionVerificationResult?> VerifyPrescriptionAsync(string prescriptionId, CancellationToken ct = default);
 }
 
-// SignalR message types
-public sealed record DispenserCommand(CommandType Type, object? Payload = null);
+public sealed record DispenseCommand(Guid RequestId, string PrescriptionId, string Medication, string Dosage);
 public sealed record DispenseResultNotification(Guid RequestId, bool Success, string? ErrorMessage = null);
-
-public enum CommandType
-{
-    Dispense,
-    CancelDispense,
-    RequestInventoryUpdate,
-    Reboot,
-    RunDiagnostics
-}

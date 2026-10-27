@@ -1,9 +1,8 @@
 namespace SmartDispenser.Core.Entities;
 
 /// <summary>
-/// Domain entity representing a physical smart vending machine.
-/// Models an explicit state machine: state transitions are validated
-/// to prevent invalid operations (e.g. dispensing while offline).
+/// A physical vending machine. Every state change goes through a method that checks
+/// the current state, so a machine can never dispense while offline, busy or empty.
 /// </summary>
 public sealed class Dispenser
 {
@@ -20,7 +19,6 @@ public sealed class Dispenser
     public DateTimeOffset CreatedAt { get; private set; }
     public DateTimeOffset UpdatedAt { get; private set; }
 
-    // EF Core constructor
     private Dispenser() { }
 
     public static Dispenser Create(string name, string location, int inventoryCapacity)
@@ -29,106 +27,90 @@ public sealed class Dispenser
         ArgumentException.ThrowIfNullOrWhiteSpace(location);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(inventoryCapacity);
 
+        var now = DateTimeOffset.UtcNow;
         return new Dispenser
         {
             Id = Guid.NewGuid(),
             Name = name,
             Location = location,
             Status = DispenserStatus.Offline,
-            InventoryCount = 0,
             InventoryCapacity = inventoryCapacity,
-            LastHeartbeatAt = DateTimeOffset.UtcNow,
-            CreatedAt = DateTimeOffset.UtcNow,
-            UpdatedAt = DateTimeOffset.UtcNow,
+            LastHeartbeatAt = now,
+            CreatedAt = now,
+            UpdatedAt = now,
         };
     }
 
-    // ── State machine transitions ──────────────────────────────────────────────
+    public bool CanDispense() => Status == DispenserStatus.Idle;
 
-    /// <summary>Returns true if the dispenser is in a state that allows dispensing.</summary>
-    public bool CanDispense() =>
-        Status == DispenserStatus.Idle && InventoryCount > 0;
+    public double InventoryPercentage => (double)InventoryCount / InventoryCapacity * 100;
+
+    public bool IsStale(TimeSpan threshold) => DateTimeOffset.UtcNow - LastHeartbeatAt > threshold;
 
     public void BeginDispensing(Guid requestId)
     {
         EnsureStatus(DispenserStatus.Idle, "begin dispensing");
-        EnsureInventoryAvailable();
-
-        Status = DispenserStatus.Dispensing;
         CurrentDispenseRequestId = requestId;
-        UpdatedAt = DateTimeOffset.UtcNow;
+        SetStatus(DispenserStatus.Dispensing);
     }
 
-    public void CompleteDispensing()
+    public void CompleteDispensing(Guid requestId)
     {
-        EnsureStatus(DispenserStatus.Dispensing, "complete dispensing");
-
-        Status = DispenserStatus.Idle;
-        InventoryCount = Math.Max(0, InventoryCount - 1);
+        EnsureDispensing(requestId, "complete");
+        InventoryCount--;
         LastDispenseAt = DateTimeOffset.UtcNow;
         CurrentDispenseRequestId = null;
-        UpdatedAt = DateTimeOffset.UtcNow;
+        SetStatus(ReadyStatus);
     }
 
-    public void FailDispensing(string reason)
+    public void FailDispensing(Guid requestId)
     {
-        if (Status != DispenserStatus.Dispensing)
-            return; // Idempotent — already recovered
-
-        Status = DispenserStatus.Error;
+        EnsureDispensing(requestId, "fail");
         CurrentDispenseRequestId = null;
-        UpdatedAt = DateTimeOffset.UtcNow;
+        SetStatus(DispenserStatus.Error);
+    }
+
+    public void ResetFromError()
+    {
+        EnsureStatus(DispenserStatus.Error, "reset");
+        SetStatus(ReadyStatus);
     }
 
     public void GoOnline(string? firmwareVersion = null)
     {
-        Status = DispenserStatus.Idle;
         FirmwareVersion = firmwareVersion ?? FirmwareVersion;
-        LastHeartbeatAt = DateTimeOffset.UtcNow;
-        UpdatedAt = DateTimeOffset.UtcNow;
-    }
-
-    public void GoOffline()
-    {
-        if (Status == DispenserStatus.Dispensing)
-            FailDispensing("Machine went offline during dispense");
-
-        Status = DispenserStatus.Offline;
-        UpdatedAt = DateTimeOffset.UtcNow;
+        RecordHeartbeat();
     }
 
     public void RecordHeartbeat()
     {
         LastHeartbeatAt = DateTimeOffset.UtcNow;
         if (Status == DispenserStatus.Offline)
-            Status = DispenserStatus.Idle;
-        UpdatedAt = DateTimeOffset.UtcNow;
+            SetStatus(ReadyStatus);
+    }
+
+    public void GoOffline()
+    {
+        CurrentDispenseRequestId = null;
+        SetStatus(DispenserStatus.Offline);
     }
 
     public void UpdateInventory(int count)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(count);
-        InventoryCount = Math.Min(count, InventoryCapacity);
-        if (InventoryCount == 0 && Status == DispenserStatus.Idle)
-            Status = DispenserStatus.InventoryEmpty;
-        UpdatedAt = DateTimeOffset.UtcNow;
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(count, InventoryCapacity);
+        InventoryCount = count;
+        if (Status is DispenserStatus.Idle or DispenserStatus.InventoryEmpty)
+            SetStatus(ReadyStatus);
     }
 
-    public void ResetFromError()
+    private DispenserStatus ReadyStatus => InventoryCount == 0 ? DispenserStatus.InventoryEmpty : DispenserStatus.Idle;
+
+    private void SetStatus(DispenserStatus status)
     {
-        EnsureStatus(DispenserStatus.Error, "reset");
-        Status = DispenserStatus.Idle;
-        CurrentDispenseRequestId = null;
+        Status = status;
         UpdatedAt = DateTimeOffset.UtcNow;
     }
-
-    public double InventoryPercentage =>
-        InventoryCapacity == 0 ? 0 : (double)InventoryCount / InventoryCapacity * 100;
-
-    public bool IsStale(TimeSpan threshold) =>
-        DateTimeOffset.UtcNow - LastHeartbeatAt > threshold;
-
-    // ── Guards ────────────────────────────────────────────────────────────────
 
     private void EnsureStatus(DispenserStatus expected, string operation)
     {
@@ -137,10 +119,11 @@ public sealed class Dispenser
                 $"Cannot {operation}: dispenser '{Name}' is in state '{Status}' (expected '{expected}').");
     }
 
-    private void EnsureInventoryAvailable()
+    private void EnsureDispensing(Guid requestId, string operation)
     {
-        if (InventoryCount <= 0)
+        EnsureStatus(DispenserStatus.Dispensing, $"{operation} dispense");
+        if (CurrentDispenseRequestId != requestId)
             throw new InvalidOperationException(
-                $"Cannot dispense from '{Name}': inventory is empty.");
+                $"Cannot {operation} dispense {requestId}: dispenser '{Name}' is dispensing {CurrentDispenseRequestId}.");
     }
 }

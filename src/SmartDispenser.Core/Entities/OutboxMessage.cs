@@ -3,12 +3,8 @@ using System.Text.Json;
 namespace SmartDispenser.Core.Entities;
 
 /// <summary>
-/// Outbox pattern entity — ensures at-least-once delivery of domain events
-/// to external systems (webhooks, message queues) even in case of crashes.
-///
-/// Design: events are written atomically with the business transaction.
-/// A background processor reads unprocessed messages and delivers them,
-/// retrying on failure with exponential backoff.
+/// An event saved in the same transaction as the state change that produced it, then
+/// delivered by OutboxProcessor with exponential backoff until it succeeds or dead-letters.
 /// </summary>
 public sealed class OutboxMessage
 {
@@ -22,7 +18,6 @@ public sealed class OutboxMessage
     public DateTimeOffset? ProcessedAt { get; private set; }
     public DateTimeOffset? NextRetryAt { get; private set; }
 
-    // Maximum delivery attempts before marking as Dead Letter
     public const int MaxRetries = 5;
 
     private OutboxMessage() { }
@@ -62,16 +57,17 @@ public sealed class OutboxMessage
         }
         else
         {
-            // Exponential backoff: 5s, 25s, 125s, 625s
             var backoffSeconds = Math.Pow(5, RetryCount);
             NextRetryAt = DateTimeOffset.UtcNow.AddSeconds(backoffSeconds);
             Status = OutboxMessageStatus.Pending;
         }
     }
-
-    public bool IsReadyToProcess() =>
-        Status == OutboxMessageStatus.Pending
-        && (NextRetryAt == null || NextRetryAt <= DateTimeOffset.UtcNow);
 }
 
-public enum OutboxMessageStatus { Pending, Processing, Processed, DeadLetter }
+public enum OutboxMessageStatus { Pending, Processed, DeadLetter }
+
+public static class OutboxEvents
+{
+    /// <summary>Payload: <see cref="Interfaces.DispenseResultNotification"/>.</summary>
+    public const string DispenseResult = "DispenseResult";
+}

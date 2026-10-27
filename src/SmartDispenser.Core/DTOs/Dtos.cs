@@ -1,48 +1,30 @@
+using SmartDispenser.Core.Entities;
+
 namespace SmartDispenser.Core.DTOs;
 
-/// <summary>
-/// Result of verifying a prescription against the HealthTech Agent Orchestrator API.
-/// Maps from the Python API response shape.
-/// </summary>
+/// <summary>A prescription as reported by the HealthTech Agent Orchestrator.</summary>
 public sealed record PrescriptionVerificationResult
 {
     public required string PrescriptionId { get; init; }
     public required string ThreadId { get; init; }
-
-    /// <summary>True when a doctor has explicitly approved the prescription (HITL step passed).</summary>
     public required bool IsApproved { get; init; }
-
-    /// <summary>True when the SHA-256 audit chain is intact (no tampering detected).</summary>
     public required bool AuditChainValid { get; init; }
-
-    /// <summary>True when the AI safety agent approved the medication (allergy check passed).</summary>
     public required bool SafetyApproved { get; init; }
-
-    /// <summary>True when the prescription is awaiting doctor approval (HITL not completed yet).</summary>
     public required bool IsPendingApproval { get; init; }
-
     public string? ProposedMedication { get; init; }
     public string? Dosage { get; init; }
     public string? RiskNotes { get; init; }
     public string? DoctorComments { get; init; }
 
-    /// <summary>
-    /// Returns true only when ALL conditions for safe dispensing are met:
-    /// - Doctor has approved
-    /// - AI safety agent approved (no allergy conflict)
-    /// - Cryptographic audit chain is intact
-    /// </summary>
-    public bool IsReadyForDispensing =>
-        IsApproved && SafetyApproved && AuditChainValid && !IsPendingApproval;
-
-    public string GetRejectionReason()
+    /// <summary>Why this prescription must not be dispensed, or null when every approval gate passed.</summary>
+    public string? RejectionReason => this switch
     {
-        if (IsPendingApproval) return "Prescription is pending doctor approval.";
-        if (!IsApproved) return "Doctor has not approved this prescription.";
-        if (!SafetyApproved) return $"Safety agent flagged an issue: {RiskNotes}";
-        if (!AuditChainValid) return "⚠️ Audit chain integrity check FAILED — possible data tampering.";
-        return "Unknown rejection reason.";
-    }
+        { IsPendingApproval: true } => "Prescription is pending doctor approval.",
+        { IsApproved: false } => "Doctor has not approved this prescription.",
+        { SafetyApproved: false } => $"Safety agent flagged an issue: {RiskNotes}",
+        { AuditChainValid: false } => "Audit chain integrity check failed: possible data tampering.",
+        _ => null,
+    };
 }
 
 public sealed record DispenserStateDto
@@ -57,7 +39,37 @@ public sealed record DispenserStateDto
     public required DateTimeOffset LastHeartbeatAt { get; init; }
     public DateTimeOffset? LastDispenseAt { get; init; }
     public string? FirmwareVersion { get; init; }
-    public bool IsOnline => Status != "Offline";
+    public bool IsOnline => Status != nameof(DispenserStatus.Offline);
+
+    public static DispenserStateDto From(Dispenser d) => new()
+    {
+        Id = d.Id,
+        Name = d.Name,
+        Location = d.Location,
+        Status = d.Status.ToString(),
+        InventoryCount = d.InventoryCount,
+        InventoryCapacity = d.InventoryCapacity,
+        InventoryPercentage = Math.Round(d.InventoryPercentage, 1),
+        LastHeartbeatAt = d.LastHeartbeatAt,
+        LastDispenseAt = d.LastDispenseAt,
+        FirmwareVersion = d.FirmwareVersion,
+    };
+}
+
+public sealed record DispenseRequestDto(
+    Guid Id,
+    Guid DispenserId,
+    string PrescriptionId,
+    string Medication,
+    string Dosage,
+    string Status,
+    string? FailureReason,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset? CompletedAt)
+{
+    public static DispenseRequestDto From(DispenseRequest r) => new(
+        r.Id, r.DispenserId, r.PrescriptionId, r.Medication, r.Dosage,
+        r.Status.ToString(), r.FailureReason, r.CreatedAt, r.CompletedAt);
 }
 
 public sealed record PaymentWebhookPayload
@@ -67,8 +79,8 @@ public sealed record PaymentWebhookPayload
     public required string DispenseRequestId { get; init; }
     public required decimal Amount { get; init; }
     public required string Currency { get; init; }
-    public required string Status { get; init; }    // "confirmed" | "failed"
-    public required string Provider { get; init; }  // "redsys" | "stripe" | "sandbox"
+    public required string Status { get; init; }
+    public required string Provider { get; init; }
     public string? GatewayResponse { get; init; }
     public required DateTimeOffset Timestamp { get; init; }
 }

@@ -13,7 +13,7 @@ public sealed class UpdateMachineStateHandlerTests
         var (dispenser, request) = await SeedDispensing(inventory: 5);
 
         var act = () => Handle(new UpdateMachineStateCommand(dispenser.Id, MachineStateEvent.DispenseCompleted,
-            CompletedRequestId: Guid.NewGuid()));
+            RequestId: Guid.NewGuid()));
 
         await act.Should().ThrowAsync<InvalidOperationException>();
         dispenser.Status.Should().Be(DispenserStatus.Dispensing);
@@ -37,7 +37,7 @@ public sealed class UpdateMachineStateHandlerTests
         new UpdateMachineStateHandler(
             new DispenserRepository(_db),
             new DispenseRequestRepository(_db),
-            new Mock<IDispenserHubContext>().Object,
+            new RecordingNotifier(),
             NullLogger<UpdateMachineStateHandler>.Instance).Handle(cmd, CancellationToken.None);
 
     private async Task<(Dispenser, DispenseRequest)> SeedDispensing(int inventory)
@@ -46,8 +46,7 @@ public sealed class UpdateMachineStateHandlerTests
         dispenser.GoOnline();
         dispenser.UpdateInventory(inventory);
         var request = DispenseRequest.Create(dispenser.Id, "RX-1", "PATIENT-1", "Amoxicillin", "500 mg");
-        request.MarkPrescriptionVerified();
-        request.MarkPaymentReceived(Guid.NewGuid());
+        request.RecordPayment(Guid.NewGuid());
         request.MarkDispatched();
         dispenser.BeginDispensing(request.Id);
         _db.AddRange(dispenser, request);

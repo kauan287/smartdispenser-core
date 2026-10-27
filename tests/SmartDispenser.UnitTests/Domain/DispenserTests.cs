@@ -42,8 +42,9 @@ public sealed class DispenserTests
         var d = Dispenser.Create("Machine-01", "Floor 1", 50);
         d.GoOnline();
         d.UpdateInventory(10);
-        d.BeginDispensing(Guid.NewGuid());
-        d.CompleteDispensing();
+        var requestId = Guid.NewGuid();
+        d.BeginDispensing(requestId);
+        d.CompleteDispensing(requestId);
 
         d.InventoryCount.Should().Be(9);
         d.Status.Should().Be(DispenserStatus.Idle);
@@ -83,7 +84,7 @@ public sealed class DispenserTests
         var requestId = Guid.NewGuid();
         d.BeginDispensing(requestId);
 
-        d.CompleteDispensing();
+        d.CompleteDispensing(requestId);
 
         d.InventoryCount.Should().Be(0);
         d.Status.Should().Be(DispenserStatus.InventoryEmpty);

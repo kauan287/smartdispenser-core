@@ -9,15 +9,13 @@ namespace SmartDispenser.IntegrationTests;
 public sealed class MachineClient : IAsyncDisposable
 {
     private readonly HubConnection _connection;
-    private readonly Guid _machineId;
 
     public ConcurrentQueue<JsonElement> Commands { get; } = new();
 
-    private MachineClient(HubConnection connection, Guid machineId)
+    private MachineClient(HubConnection connection)
     {
         _connection = connection;
-        _machineId = machineId;
-        _connection.On<JsonElement>("ReceiveCommand", command => Commands.Enqueue(command));
+        _connection.On<JsonElement>("ReceiveDispenseCommand", command => Commands.Enqueue(command));
     }
 
     public static async Task<MachineClient> ConnectAsync(AppFactory factory, Guid machineId)
@@ -29,15 +27,14 @@ public sealed class MachineClient : IAsyncDisposable
                 o.HttpMessageHandlerFactory = _ => factory.Server.CreateHandler();
             })
             .Build();
-        var client = new MachineClient(connection, machineId);
+        var client = new MachineClient(connection);
         await connection.StartAsync();
         return client;
     }
 
-    public Task ReportInventory(int count) => _connection.InvokeAsync("ReportInventory", _machineId.ToString(), count);
+    public Task ReportInventory(int count) => _connection.InvokeAsync("ReportInventory", count);
 
-    public Task ConfirmDispense(Guid requestId) =>
-        _connection.InvokeAsync("ConfirmDispense", _machineId.ToString(), requestId.ToString());
+    public Task ConfirmDispense(Guid requestId) => _connection.InvokeAsync("ConfirmDispense", requestId);
 
     public async Task<JsonElement> NextCommand(TimeSpan timeout)
     {

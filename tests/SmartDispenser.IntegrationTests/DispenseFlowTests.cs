@@ -3,7 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
-using SmartDispenser.Core.Entities;
+using SmartDispenser.API.SignalR;
 using SmartDispenser.Core.Interfaces;
 using Xunit;
 
@@ -43,6 +43,7 @@ public sealed class DispenseFlowTests(AppFactory factory) : IClassFixture<AppFac
 
         await Task.Delay(1000);
         machine.Commands.Should().BeEmpty("nothing may be dispensed before the payment is confirmed");
+        (await RequestStatus(requestId)).Should().Be("PendingPayment");
 
         var webhook = await _http.SendAsync(factory.SignedWebhook(PaymentJson(requestId, "TX-100")));
         webhook.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -52,13 +53,54 @@ public sealed class DispenseFlowTests(AppFactory factory) : IClassFixture<AppFac
         command.GetProperty("medication").GetString().Should().Be("Amoxicillin");
         command.GetProperty("dosage").GetString().Should().Be("500 mg every 8 hours");
 
-        await machine.ConfirmDispense(requestId);
-        await Task.Delay(500);
-        machine.Commands.Should().BeEmpty("a single payment dispenses exactly once");
+        (await RequestStatus(requestId)).Should().Be("Dispatched");
 
+        var dashboardResult = new TaskCompletionSource<DispenseResultNotification>();
+        var notifier = factory.Services.GetRequiredService<DispenserNotifier>();
+        Action<DispenseResultNotification> onResult = r => { if (r.RequestId == requestId) dashboardResult.TrySetResult(r); };
+        notifier.DispenseResultPublished += onResult;
+
+        await machine.ConfirmDispense(requestId);
+
+        (await dashboardResult.Task.WaitAsync(TimeSpan.FromSeconds(10)))
+            .Should().Be(new DispenseResultNotification(requestId, true, null), "the outbox delivers the result to the dashboard");
+        notifier.DispenseResultPublished -= onResult;
+        machine.Commands.Should().BeEmpty("a single payment dispenses exactly once");
+        (await RequestStatus(requestId)).Should().Be("Completed");
         var dispenser = await _http.GetFromJsonAsync<JsonElement>($"/api/dispensers/{dispenserId}");
         dispenser.GetProperty("status").GetString().Should().Be("Idle");
         dispenser.GetProperty("inventoryCount").GetInt32().Should().Be(4);
+    }
+
+    [Fact]
+    public async Task Replayed_webhook_with_the_same_idempotency_key_dispenses_once()
+    {
+        factory.Orchestrator.Returns("RX-300", ApprovedPrescription.Replace("RX-100", "RX-300"));
+        var dispenserId = await RegisterDispenser();
+        await using var machine = await MachineClient.ConnectAsync(factory, dispenserId);
+        await machine.ReportInventory(5);
+        var initiate = await _http.PostAsJsonAsync($"/api/dispensers/{dispenserId}/dispense",
+            new { prescriptionId = "RX-300", patientIdentifier = "PATIENT-42" });
+        var requestId = (await initiate.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("dispenseRequestId").GetGuid();
+
+        var first = await _http.SendAsync(factory.SignedWebhook(PaymentJson(requestId, "TX-300")));
+        var replay = await _http.SendAsync(factory.SignedWebhook(PaymentJson(requestId, "TX-300")));
+
+        (await first.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("duplicate").GetBoolean().Should().BeFalse();
+        (await replay.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("duplicate").GetBoolean().Should().BeTrue();
+        (await machine.NextCommand(TimeSpan.FromSeconds(5))).GetProperty("requestId").GetGuid().Should().Be(requestId);
+        await Task.Delay(500);
+        machine.Commands.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Unsigned_webhook_is_rejected_and_nothing_is_dispensed()
+    {
+        var response = await _http.PostAsync("/api/payments/webhook",
+            new StringContent(PaymentJson(Guid.NewGuid(), "TX-FORGED"), System.Text.Encoding.UTF8, "application/json"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await response.Content.ReadAsStringAsync()).Should().Be("Missing signature header.");
     }
 
     [Fact]
@@ -106,11 +148,14 @@ public sealed class DispenseFlowTests(AppFactory factory) : IClassFixture<AppFac
 
     private async Task<Guid> RegisterDispenser()
     {
-        using var scope = factory.Services.CreateScope();
-        var dispenser = Dispenser.Create($"Machine-{Guid.NewGuid():N}"[..16], "Pharmacy A", 10);
-        await scope.ServiceProvider.GetRequiredService<IDispenserRepository>().AddAsync(dispenser);
-        return dispenser.Id;
+        var response = await _http.PostAsJsonAsync("/api/dispensers",
+            new { name = $"Machine-{Guid.NewGuid():N}"[..16], location = "Pharmacy A", inventoryCapacity = 10 });
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        return (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
     }
+
+    private async Task<string?> RequestStatus(Guid requestId) =>
+        (await _http.GetFromJsonAsync<JsonElement>($"/api/dispense-requests/{requestId}")).GetProperty("status").GetString();
 
     private static string PaymentJson(Guid requestId, string transactionId) => JsonSerializer.Serialize(new
     {
