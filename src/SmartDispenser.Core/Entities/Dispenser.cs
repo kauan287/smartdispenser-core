@@ -56,7 +56,7 @@ public sealed class Dispenser
     public void CompleteDispensing(Guid requestId)
     {
         EnsureDispensing(requestId, "complete");
-        InventoryCount--;
+        InventoryCount = Math.Max(0, InventoryCount - 1);
         LastDispenseAt = DateTimeOffset.UtcNow;
         CurrentDispenseRequestId = null;
         SetStatus(ReadyStatus);
