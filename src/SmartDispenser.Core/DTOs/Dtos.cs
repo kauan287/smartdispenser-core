@@ -15,13 +15,16 @@ public sealed record PrescriptionVerificationResult
     public string? RiskNotes { get; init; }
     public string? DoctorComments { get; init; }
 
-    /// <summary>Why this prescription must not be dispensed, or null when every approval gate passed.</summary>
+    /// <summary>
+    /// Why this prescription must not be dispensed, or null when every gate passed. A broken audit chain
+    /// comes first because the orchestrator nulls every other field when it cannot trust its own record.
+    /// </summary>
     public string? RejectionReason => this switch
     {
+        { AuditChainValid: false } => "Audit chain integrity check failed: possible data tampering.",
         { IsPendingApproval: true } => "Prescription is pending doctor approval.",
         { IsApproved: false } => "Doctor has not approved this prescription.",
         { SafetyApproved: false } => $"Safety agent flagged an issue: {RiskNotes}",
-        { AuditChainValid: false } => "Audit chain integrity check failed: possible data tampering.",
         _ => null,
     };
 }
