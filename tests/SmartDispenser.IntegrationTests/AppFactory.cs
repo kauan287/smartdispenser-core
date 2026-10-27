@@ -10,6 +10,10 @@ using SmartDispenser.Infrastructure.ExternalServices;
 
 namespace SmartDispenser.IntegrationTests;
 
+/// <summary>
+/// Hosts the API in memory. Runs on the InMemory provider by default, or on PostgreSQL
+/// (migrations applied at startup) when TEST_POSTGRES_CONNECTION is set.
+/// </summary>
 public sealed class AppFactory : WebApplicationFactory<Program>
 {
     public const string WebhookSecret = "local-development-secret-not-for-production";
@@ -19,6 +23,11 @@ public sealed class AppFactory : WebApplicationFactory<Program>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Development");
+        if (Environment.GetEnvironmentVariable("TEST_POSTGRES_CONNECTION") is { } postgres)
+        {
+            builder.UseSetting("Database:Provider", "Postgres");
+            builder.UseSetting("ConnectionStrings:DefaultConnection", postgres);
+        }
         builder.ConfigureTestServices(services =>
             services.AddHttpClient<IHealthTechApiClient, HealthTechApiClient>()
                 .ConfigurePrimaryHttpMessageHandler(() => Orchestrator));
