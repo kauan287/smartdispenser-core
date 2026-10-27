@@ -1,9 +1,5 @@
 namespace SmartDispenser.Core.Entities;
 
-/// <summary>
-/// Records a payment transaction for a dispense request.
-/// Supports idempotent processing via ExternalTransactionId.
-/// </summary>
 public sealed class Payment
 {
     public Guid Id { get; private set; }
@@ -54,14 +50,6 @@ public sealed class Payment
     {
         Status = PaymentStatus.Failed;
         GatewayResponse = reason;
-        UpdatedAt = DateTimeOffset.UtcNow;
-    }
-
-    public void Refund()
-    {
-        if (Status != PaymentStatus.Confirmed)
-            throw new InvalidOperationException("Only confirmed payments can be refunded.");
-        Status = PaymentStatus.Refunded;
         UpdatedAt = DateTimeOffset.UtcNow;
     }
 }

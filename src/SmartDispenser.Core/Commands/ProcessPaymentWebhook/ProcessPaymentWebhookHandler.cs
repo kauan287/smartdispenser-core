@@ -6,128 +6,92 @@ using SmartDispenser.Core.Interfaces;
 
 namespace SmartDispenser.Core.Commands.ProcessPaymentWebhook;
 
-// ── Command ───────────────────────────────────────────────────────────────────
-
 public sealed record ProcessPaymentWebhookCommand(PaymentWebhookPayload Payload) : IRequest<ProcessPaymentResult>;
 
 public sealed record ProcessPaymentResult
 {
-    public bool Success { get; init; }
-    public bool WasDuplicate { get; init; }
-    public string? ErrorMessage { get; init; }
+    public bool Success { get; private init; }
+    public bool WasDuplicate { get; private init; }
+    public string? ErrorMessage { get; private init; }
 
     public static ProcessPaymentResult Ok() => new() { Success = true };
     public static ProcessPaymentResult Duplicate() => new() { Success = true, WasDuplicate = true };
-    public static ProcessPaymentResult Fail(string err) => new() { Success = false, ErrorMessage = err };
+    public static ProcessPaymentResult Fail(string err) => new() { ErrorMessage = err };
 }
 
-// ── Handler ───────────────────────────────────────────────────────────────────
-
-/// <summary>
-/// Processes an incoming payment webhook with idempotency guarantees.
-///
-/// Idempotency strategy:
-///   Check idempotency key in DB before processing.
-///   If duplicate → return 200 immediately (webhook provider expects this).
-///   If new → process and save in same transaction.
-///
-/// After confirming payment, sends a MediatR notification to trigger
-/// the dispense command (via InitiateDispenseHandler).
-/// </summary>
-public sealed class ProcessPaymentWebhookHandler
+public sealed class ProcessPaymentWebhookHandler(
+    IPaymentRepository paymentRepo,
+    IDispenseRequestRepository requestRepo,
+    IDispenserRepository dispenserRepo,
+    IDispenserNotifier notifier,
+    IUnitOfWork unitOfWork,
+    ILogger<ProcessPaymentWebhookHandler> logger)
     : IRequestHandler<ProcessPaymentWebhookCommand, ProcessPaymentResult>
 {
-    private readonly IPaymentRepository _paymentRepo;
-    private readonly IDispenseRequestRepository _requestRepo;
-    private readonly IMediator _mediator;
-    private readonly ILogger<ProcessPaymentWebhookHandler> _logger;
-
-    public ProcessPaymentWebhookHandler(
-        IPaymentRepository paymentRepo,
-        IDispenseRequestRepository requestRepo,
-        IMediator mediator,
-        ILogger<ProcessPaymentWebhookHandler> logger)
-    {
-        _paymentRepo = paymentRepo;
-        _requestRepo = requestRepo;
-        _mediator = mediator;
-        _logger = logger;
-    }
-
-    public async Task<ProcessPaymentResult> Handle(
-        ProcessPaymentWebhookCommand cmd,
-        CancellationToken ct)
+    public async Task<ProcessPaymentResult> Handle(ProcessPaymentWebhookCommand cmd, CancellationToken ct)
     {
         var payload = cmd.Payload;
 
-        _logger.LogInformation(
-            "Processing payment webhook: TxId={TxId} IdempotencyKey={Key}",
-            payload.TransactionId, payload.IdempotencyKey);
-
-        // ── Idempotency check ─────────────────────────────────────────────────
-        var existing = await _paymentRepo.GetByIdempotencyKeyAsync(payload.IdempotencyKey, ct);
-        if (existing is not null)
-        {
-            _logger.LogInformation(
-                "Duplicate webhook detected (IdempotencyKey={Key}). Skipping.", payload.IdempotencyKey);
+        if (await paymentRepo.GetByIdempotencyKeyAsync(payload.IdempotencyKey, ct) is not null)
             return ProcessPaymentResult.Duplicate();
-        }
 
-        // ── Resolve DispenseRequest ───────────────────────────────────────────
         if (!Guid.TryParse(payload.DispenseRequestId, out var requestId))
             return ProcessPaymentResult.Fail("Invalid DispenseRequestId format.");
 
-        var dispenseRequest = await _requestRepo.GetByIdAsync(requestId, ct);
-        if (dispenseRequest is null)
+        var request = await requestRepo.GetByIdAsync(requestId, ct);
+        if (request is null)
             return ProcessPaymentResult.Fail($"DispenseRequest {requestId} not found.");
+        if (request.Status != DispenseRequestStatus.PendingPayment)
+            return ProcessPaymentResult.Fail($"DispenseRequest {requestId} is not awaiting payment (status: {request.Status}).");
 
-        // ── Create Payment record ─────────────────────────────────────────────
         var payment = Payment.CreateFromWebhook(
-            dispenseRequestId: dispenseRequest.Id,
-            externalTransactionId: payload.TransactionId,
-            idempotencyKey: payload.IdempotencyKey,
-            amount: payload.Amount,
-            currency: payload.Currency,
-            gatewayProvider: payload.Provider);
+            request.Id, payload.TransactionId, payload.IdempotencyKey,
+            payload.Amount, payload.Currency, payload.Provider);
+        paymentRepo.Add(payment);
 
-        // ── Apply gateway result ──────────────────────────────────────────────
-        if (payload.Status.Equals("confirmed", StringComparison.OrdinalIgnoreCase))
-        {
-            payment.Confirm(payload.GatewayResponse);
-            dispenseRequest.MarkPaymentReceived(payment.Id);
-
-            await _paymentRepo.AddAsync(payment, ct);
-            await _requestRepo.UpdateAsync(dispenseRequest, ct);
-
-            // Trigger dispense via MediatR (next step in the pipeline)
-            var dispenseResult = await _mediator.Send(
-                new InitiateDispense.InitiateDispenseCommand(
-                    DispenserId: dispenseRequest.DispenserId,
-                    PrescriptionId: dispenseRequest.PrescriptionId,
-                    PatientIdentifier: dispenseRequest.PatientIdentifier),
-                ct);
-
-            if (!dispenseResult.Success)
-            {
-                _logger.LogWarning(
-                    "Payment confirmed but dispense failed: {Reason}", dispenseResult.ErrorMessage);
-                // Payment is still recorded as confirmed — business decision:
-                // refund flow should be triggered separately
-            }
-        }
-        else
+        if (!payload.Status.Equals("confirmed", StringComparison.OrdinalIgnoreCase))
         {
             payment.Fail(payload.GatewayResponse ?? "Gateway returned failure status.");
-            dispenseRequest.MarkFailed($"Payment failed: {payload.GatewayResponse}");
-
-            await _paymentRepo.AddAsync(payment, ct);
-            await _requestRepo.UpdateAsync(dispenseRequest, ct);
-
-            _logger.LogWarning(
-                "Payment failed for DispenseRequest {RequestId}: {Reason}",
-                requestId, payload.GatewayResponse);
+            request.MarkFailed($"Payment failed: {payment.GatewayResponse}");
+            await unitOfWork.SaveChangesAsync(ct);
+            return ProcessPaymentResult.Ok();
         }
 
+        payment.Confirm(payload.GatewayResponse);
+        request.RecordPayment(payment.Id);
+
+        var dispenser = await dispenserRepo.GetByIdAsync(request.DispenserId, ct);
+        if (dispenser is null || !dispenser.CanDispense())
+        {
+            request.MarkFailed(
+                $"Dispenser was not ready when payment {payment.Id} arrived (status: {dispenser?.Status}). Refund required.");
+            await unitOfWork.SaveChangesAsync(ct);
+            logger.LogWarning("Paid dispense request {RequestId} could not be dispatched", request.Id);
+            return ProcessPaymentResult.Ok();
+        }
+
+        dispenser.BeginDispensing(request.Id);
+        request.MarkDispatched();
+        await unitOfWork.SaveChangesAsync(ct);
+
+        try
+        {
+            await notifier.SendDispenseCommandAsync(
+                dispenser.Id,
+                new DispenseCommand(request.Id, request.PrescriptionId, request.Medication, request.Dosage),
+                ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Could not send dispense command {RequestId} to machine {DispenserId}", request.Id, dispenser.Id);
+            dispenser.FailDispensing(request.Id);
+            request.MarkFailed("Could not reach the machine. Refund required.");
+            await unitOfWork.SaveChangesAsync(ct);
+            return ProcessPaymentResult.Ok();
+        }
+
+        await notifier.PublishStateAsync(DispenserStateDto.From(dispenser), ct);
+        logger.LogInformation("Dispense request {RequestId} dispatched to machine {DispenserId}", request.Id, dispenser.Id);
         return ProcessPaymentResult.Ok();
     }
 }

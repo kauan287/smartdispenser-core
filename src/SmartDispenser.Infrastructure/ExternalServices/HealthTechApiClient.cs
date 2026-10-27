@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
@@ -7,95 +8,52 @@ using SmartDispenser.Core.Interfaces;
 namespace SmartDispenser.Infrastructure.ExternalServices;
 
 /// <summary>
-/// HTTP client for the HealthTech Agent Orchestrator API (Project 1).
-///
-/// Resilience strategy (configured via Microsoft.Extensions.Http.Resilience):
-///   - Retry: 3 attempts, exponential backoff (2s, 4s, 8s)
-///   - Circuit Breaker: opens after 5 failures in 30s, half-open after 60s
-///   - Timeout: 10s per individual request
-///
-/// The circuit breaker prevents the dispenser system from hanging on
-/// every request when the HealthTech API is unavailable.
+/// Reads prescriptions from the HealthTech Agent Orchestrator at
+/// <c>GET /api/v1/prescriptions/session-{prescription_id}</c>. Retries, timeouts and the
+/// circuit breaker come from the resilience handler registered in DependencyInjection.
 /// </summary>
-public sealed class HealthTechApiClient : IHealthTechApiClient
+public sealed class HealthTechApiClient(HttpClient httpClient, ILogger<HealthTechApiClient> logger) : IHealthTechApiClient
 {
-    private readonly HttpClient _httpClient;
-    private readonly ILogger<HealthTechApiClient> _logger;
-
-    public HealthTechApiClient(HttpClient httpClient, ILogger<HealthTechApiClient> logger)
+    public async Task<PrescriptionVerificationResult?> VerifyPrescriptionAsync(string prescriptionId, CancellationToken ct = default)
     {
-        _httpClient = httpClient;
-        _logger = logger;
-    }
+        using var response = await httpClient.GetAsync(
+            $"/api/v1/prescriptions/session-{Uri.EscapeDataString(prescriptionId)}", ct);
 
-    /// <summary>
-    /// Fetches prescription state from the HealthTech Orchestrator.
-    /// Maps from the Python API response shape into our domain DTO.
-    /// </summary>
-    public async Task<PrescriptionVerificationResult> VerifyPrescriptionAsync(
-        string prescriptionId,
-        CancellationToken ct = default)
-    {
-        // The HealthTech API uses thread_id = "session-{prescription_id}"
-        var threadId = $"session-{prescriptionId}";
-
-        _logger.LogDebug(
-            "Verifying prescription {PrescriptionId} (thread_id={ThreadId})",
-            prescriptionId, threadId);
-
-        var response = await _httpClient.GetAsync(
-            $"/api/v1/prescriptions/{threadId}", ct);
-
-        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
-        {
-            _logger.LogWarning("Prescription {Id} not found in HealthTech API", prescriptionId);
-            throw new PrescriptionNotFoundException(prescriptionId);
-        }
-
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return null;
         response.EnsureSuccessStatusCode();
 
-        var payload = await response.Content.ReadFromJsonAsync<HealthTechPrescriptionResponse>(
-            cancellationToken: ct);
+        var session = await response.Content.ReadFromJsonAsync<OrchestratorSession>(ct)
+            ?? throw new InvalidOperationException("HealthTech API returned an empty body.");
 
-        if (payload is null)
-            throw new InvalidOperationException("HealthTech API returned empty response.");
-
-        _logger.LogInformation(
-            "Prescription {Id}: approved={Approved}, safetyOk={Safety}, auditOk={Audit}",
-            prescriptionId, payload.human_approved, payload.safety_approved, payload.audit_chain_valid);
+        logger.LogInformation(
+            "Prescription {PrescriptionId}: human_approved={Approved} safety_approved={Safety} audit_chain_valid={Audit}",
+            prescriptionId, session.HumanApproved, session.SafetyApproved, session.AuditChainValid);
 
         return new PrescriptionVerificationResult
         {
-            PrescriptionId = payload.prescription_id,
-            ThreadId = threadId,
-            IsApproved = payload.human_approved == true,
-            AuditChainValid = payload.audit_chain_valid,
-            SafetyApproved = payload.safety_approved,
-            IsPendingApproval = payload.is_paused_waiting_approval,
-            ProposedMedication = payload.proposed_medication,
-            Dosage = payload.dosage,
-            RiskNotes = payload.risk_notes,
-            DoctorComments = payload.doctor_comments,
+            PrescriptionId = session.PrescriptionId,
+            ThreadId = session.ThreadId,
+            IsApproved = session.HumanApproved == true,
+            SafetyApproved = session.SafetyApproved,
+            AuditChainValid = session.AuditChainValid,
+            IsPendingApproval = session.IsPausedWaitingApproval,
+            ProposedMedication = session.ProposedMedication,
+            Dosage = session.Dosage,
+            RiskNotes = session.RiskNotes,
+            DoctorComments = session.DoctorComments,
         };
     }
 
-    // ── Private DTO — matches the Python FastAPI response shape ───────────────
-
-    private sealed class HealthTechPrescriptionResponse
-    {
-        public string thread_id { get; set; } = string.Empty;
-        public string prescription_id { get; set; } = string.Empty;
-        public string? proposed_medication { get; set; }
-        public string? dosage { get; set; }
-        public bool safety_approved { get; set; }
-        public string? risk_notes { get; set; }
-        public bool? human_approved { get; set; }
-        public string? doctor_comments { get; set; }
-        public bool is_paused_waiting_approval { get; set; }
-        public bool audit_chain_valid { get; set; }
-    }
+    private sealed record OrchestratorSession(
+        [property: JsonPropertyName("thread_id")] string ThreadId,
+        [property: JsonPropertyName("prescription_id")] string PrescriptionId,
+        [property: JsonPropertyName("proposed_medication")] string? ProposedMedication,
+        [property: JsonPropertyName("dosage")] string? Dosage,
+        [property: JsonPropertyName("safety_approved")] bool SafetyApproved,
+        [property: JsonPropertyName("risk_notes")] string? RiskNotes,
+        [property: JsonPropertyName("human_approved")] bool? HumanApproved,
+        [property: JsonPropertyName("doctor_comments")] string? DoctorComments,
+        [property: JsonPropertyName("is_paused_waiting_approval")] bool IsPausedWaitingApproval,
+        [property: JsonPropertyName("audit_chain_valid")] bool AuditChainValid);
 }
-
-/// <summary>Thrown when the HealthTech API returns 404 for a prescription.</summary>
-public sealed class PrescriptionNotFoundException(string prescriptionId)
-    : Exception($"Prescription '{prescriptionId}' was not found in the HealthTech Orchestrator.");

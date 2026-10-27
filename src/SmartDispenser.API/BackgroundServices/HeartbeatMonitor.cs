@@ -8,14 +8,8 @@ using SmartDispenser.Core.Interfaces;
 namespace SmartDispenser.API.BackgroundServices;
 
 /// <summary>
-/// Monitors machine connectivity health by detecting stale heartbeats.
-///
-/// Every 30 seconds, checks all machines whose LastHeartbeatAt is older
-/// than the configured threshold. Machines that miss heartbeats are
-/// transitioned to Offline status.
-///
-/// This catches machines that disconnect without sending OnDisconnectedAsync
-/// (e.g. network cable pull, power loss, OS crash).
+/// Marks machines Offline after 90 s without a heartbeat. SignalR does not always raise
+/// OnDisconnectedAsync promptly when a machine loses power or network.
 /// </summary>
 public sealed class HeartbeatMonitor : BackgroundService
 {

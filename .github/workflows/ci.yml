@@ -2,100 +2,79 @@ name: CI
 
 on:
   push:
-    branches: [main, master, develop]
+    branches: [master]
   pull_request:
-    branches: [main, master]
+    branches: [master]
 
 env:
-  DOTNET_VERSION: "10.0.x"
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
 
 jobs:
-  # ── Build & Test ──────────────────────────────────────────────────────────────
   build-and-test:
-    name: "Build & Test (.NET 10)"
+    name: Build and test
     runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup .NET ${{ env.DOTNET_VERSION }}
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
-
-      - name: Restore dependencies
-        run: dotnet restore SmartDispenser.sln
-
-      - name: Build (Release)
-        run: dotnet build SmartDispenser.sln --no-restore -c Release
-
-      - name: Run unit tests with coverage
-        run: |
-          dotnet test tests/SmartDispenser.UnitTests/ \
-            --no-build \
-            -c Release \
-            --verbosity normal \
-            --collect:"XPlat Code Coverage" \
-            --results-directory ./coverage
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
-        with:
-          directory: ./coverage
-          fail_ci_if_error: false
+    services:
+      postgres:
+        image: postgres:16-alpine
         env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-
-  # ── Code Quality ──────────────────────────────────────────────────────────────
-  quality:
-    name: "Code Quality"
-    runs-on: ubuntu-latest
+          POSTGRES_USER: smartdispenser
+          POSTGRES_PASSWORD: smartdispenser
+          POSTGRES_DB: smartdispenser_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U smartdispenser"
+          --health-interval 5s --health-timeout 5s --health-retries 10
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - name: Setup .NET ${{ env.DOTNET_VERSION }}
-        uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
+          dotnet-version: "10.0.x"
 
       - name: Restore
         run: dotnet restore SmartDispenser.sln
 
       - name: Check formatting
-        # Run format fix then verify nothing changed — avoids false failures
-        # from CRLF/LF differences between Windows dev and Linux CI
-        run: |
-          dotnet format SmartDispenser.sln
-          git diff --exit-code || (echo "❌ Formatting differences found. Run 'dotnet format' locally." && exit 1)
+        run: dotnet format SmartDispenser.sln --no-restore --verify-no-changes
 
-  # ── Docker Build ──────────────────────────────────────────────────────────────
+      - name: Build
+        run: dotnet build SmartDispenser.sln --no-restore -c Release -warnaserror
+
+      - name: Unit tests
+        run: dotnet test tests/SmartDispenser.UnitTests --no-build -c Release
+
+      - name: Integration tests (InMemory)
+        run: dotnet test tests/SmartDispenser.IntegrationTests --no-build -c Release
+
+      - name: Integration tests (PostgreSQL)
+        run: dotnet test tests/SmartDispenser.IntegrationTests --no-build -c Release
+        env:
+          TEST_POSTGRES_CONNECTION: Host=localhost;Port=5432;Database=smartdispenser_ci;Username=smartdispenser;Password=smartdispenser
+
   docker:
-    name: "Docker Build"
+    name: Docker Compose smoke test
     runs-on: ubuntu-latest
-    needs: [build-and-test]
+    needs: build-and-test
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - name: Build Docker image (.NET 10)
-        run: docker build -t smartdispenser-core:ci .
-
-      - name: Verify image starts
-        # Uses process-alive check instead of HTTP smoke test because
-        # no PostgreSQL is available in CI (would need service container).
+      - name: Start the stack as the README quick start does
         run: |
-          docker run -d \
-            --name smartdispenser_ci \
-            -e ASPNETCORE_ENVIRONMENT=Development \
-            -e ConnectionStrings__DefaultConnection="Host=localhost;Database=x;Username=x;Password=x" \
-            -e HealthTechApi__BaseUrl=http://localhost:8000 \
-            -e Webhook__Secret=test-secret-at-least-32-chars-ok \
-            -e Database__AutoMigrate=false \
-            -p 8080:8080 \
-            smartdispenser-core:ci
-          sleep 8
-          docker inspect smartdispenser_ci --format='{{.State.Status}}' | grep -q running
-          docker stop smartdispenser_ci
+          cp .env.example .env
+          docker compose up -d --build
+
+      - name: Smoke test
+        run: |
+          set -a; source .env; set +a
+          scripts/smoke.sh http://localhost:8001
+
+      - name: Container logs
+        if: always()
+        run: docker compose logs api
+
+      - name: Stop
+        if: always()
+        run: docker compose down -v

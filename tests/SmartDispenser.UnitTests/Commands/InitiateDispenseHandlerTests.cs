@@ -1,189 +1,137 @@
-using FluentAssertions;
-using Moq;
 using SmartDispenser.Core.Commands.InitiateDispense;
-using SmartDispenser.Core.DTOs;
-using SmartDispenser.Core.Entities;
-using SmartDispenser.Core.Interfaces;
-using Microsoft.Extensions.Logging.Abstractions;
-using MediatR;
+using SmartDispenser.Infrastructure.Data;
+using SmartDispenser.Infrastructure.Repositories;
 
 namespace SmartDispenser.UnitTests.Commands;
 
 public sealed class InitiateDispenseHandlerTests
 {
-    private readonly Mock<IHealthTechApiClient> _healthTechMock = new();
-    private readonly Mock<IDispenserRepository> _dispenserRepoMock = new();
-    private readonly Mock<IDispenseRequestRepository> _requestRepoMock = new();
-    private readonly Mock<IDispenserHubContext> _hubContextMock = new();
-
-    private InitiateDispenseHandler CreateHandler() => new(
-        _healthTechMock.Object,
-        _dispenserRepoMock.Object,
-        _requestRepoMock.Object,
-        _hubContextMock.Object,
-        NullLogger<InitiateDispenseHandler>.Instance);
-
-    // ── Happy path ────────────────────────────────────────────────────────────
+    private readonly AppDbContext _db = TestDb.Create();
+    private readonly FakeHealthTechClient _healthTech = new();
 
     [Fact]
-    public async Task Handle_WhenPrescriptionApprovedAndDispenserIdle_ReturnsSuccess()
+    public async Task Approved_prescription_on_an_idle_machine_is_reserved_pending_payment()
     {
-        // Arrange
-        var dispenser = CreateIdleDispenser();
-        SetupApprovedPrescription();
-        _dispenserRepoMock.Setup(r => r.GetByIdAsync(dispenser.Id, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(dispenser);
+        var dispenser = await SeedIdleDispenser();
+        _healthTech.Add(FakeHealthTechClient.Approved("RX-001"));
 
-        var handler = CreateHandler();
-        var cmd = new InitiateDispenseCommand(dispenser.Id, "RX-001", "PATIENT-42");
+        var result = await Handle(new InitiateDispenseCommand(dispenser.Id, "RX-001", "PATIENT-42"));
 
-        // Act
-        var result = await handler.Handle(cmd, CancellationToken.None);
-
-        // Assert
-        result.Success.Should().BeTrue();
-        result.DispenseRequestId.Should().NotBeNull();
-        result.ErrorMessage.Should().BeNull();
-
-        _hubContextMock.Verify(h =>
-            h.SendCommandAsync(dispenser.Id, It.IsAny<DispenserCommand>(), It.IsAny<CancellationToken>()),
-            Times.Once);
+        result.Error.Should().BeNull();
+        var request = await _db.DispenseRequests.SingleAsync();
+        request.Id.Should().Be(result.DispenseRequestId!.Value);
+        request.Status.Should().Be(DispenseRequestStatus.PendingPayment);
+        request.Medication.Should().Be("Amoxicillin");
+        request.Dosage.Should().Be("500 mg every 8 hours");
+        dispenser.Status.Should().Be(DispenserStatus.Idle);
     }
 
-    // ── Prescription rejection paths ──────────────────────────────────────────
-
-    [Fact]
-    public async Task Handle_WhenPrescriptionPendingApproval_ReturnsFailure()
+    [Theory]
+    [InlineData("pending", "Prescription is pending doctor approval.")]
+    [InlineData("unapproved", "Doctor has not approved this prescription.")]
+    [InlineData("unsafe", "Safety agent flagged an issue: Penicillin allergy")]
+    [InlineData("tampered", "Audit chain integrity check failed: possible data tampering.")]
+    [InlineData("tampered-and-pending", "Audit chain integrity check failed: possible data tampering.")]
+    [InlineData("no-dosage", "Prescription has no medication or dosage.")]
+    public async Task Prescription_failing_a_gate_is_rejected_and_nothing_is_reserved(string variant, string expectedReason)
     {
-        // Arrange
-        var dispenser = CreateIdleDispenser();
-        _dispenserRepoMock.Setup(r => r.GetByIdAsync(dispenser.Id, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(dispenser);
+        var dispenser = await SeedIdleDispenser();
+        var approved = FakeHealthTechClient.Approved("RX-002");
+        _healthTech.Add(variant switch
+        {
+            "pending" => approved with { IsApproved = false, IsPendingApproval = true },
+            "unapproved" => approved with { IsApproved = false },
+            "unsafe" => approved with { SafetyApproved = false, RiskNotes = "Penicillin allergy" },
+            "tampered" => approved with { AuditChainValid = false },
+            "tampered-and-pending" => approved with { AuditChainValid = false, IsApproved = false, IsPendingApproval = true, SafetyApproved = false },
+            "no-dosage" => approved with { Dosage = null },
+            _ => throw new ArgumentOutOfRangeException(nameof(variant)),
+        });
 
-        _healthTechMock
-            .Setup(c => c.VerifyPrescriptionAsync("RX-001", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PrescriptionVerificationResult
-            {
-                PrescriptionId = "RX-001",
-                ThreadId = "session-RX-001",
-                IsApproved = false,
-                AuditChainValid = true,
-                SafetyApproved = true,
-                IsPendingApproval = true,  // <-- still waiting for doctor
-            });
+        var result = await Handle(new InitiateDispenseCommand(dispenser.Id, "RX-002", "PATIENT-42"));
 
-        var handler = CreateHandler();
-        var result = await handler.Handle(
-            new InitiateDispenseCommand(dispenser.Id, "RX-001", "PATIENT-42"), CancellationToken.None);
-
-        // Assert
-        result.Success.Should().BeFalse();
-        result.ErrorMessage.Should().Contain("pending doctor approval");
-        _hubContextMock.Verify(
-            h => h.SendCommandAsync(It.IsAny<Guid>(), It.IsAny<DispenserCommand>(), It.IsAny<CancellationToken>()),
-            Times.Never);
+        result.Error.Should().Be(InitiateDispenseError.Rejected);
+        result.ErrorMessage.Should().Be(expectedReason);
+        (await _db.DispenseRequests.CountAsync()).Should().Be(0);
     }
 
     [Fact]
-    public async Task Handle_WhenAuditChainInvalid_ReturnsFailure()
+    public async Task Unknown_prescription_is_rejected_as_not_found()
     {
-        // Arrange
-        var dispenser = CreateIdleDispenser();
-        _dispenserRepoMock.Setup(r => r.GetByIdAsync(dispenser.Id, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(dispenser);
+        var dispenser = await SeedIdleDispenser();
 
-        _healthTechMock
-            .Setup(c => c.VerifyPrescriptionAsync("RX-002", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PrescriptionVerificationResult
-            {
-                PrescriptionId = "RX-002",
-                ThreadId = "session-RX-002",
-                IsApproved = true,
-                AuditChainValid = false,  // <-- tampered!
-                SafetyApproved = true,
-                IsPendingApproval = false,
-            });
+        var result = await Handle(new InitiateDispenseCommand(dispenser.Id, "RX-404", "PATIENT-42"));
 
-        var handler = CreateHandler();
-        var result = await handler.Handle(
-            new InitiateDispenseCommand(dispenser.Id, "RX-002", "PATIENT-42"), CancellationToken.None);
-
-        result.Success.Should().BeFalse();
-        // ContainEquivalentOf performs case-insensitive substring match
-        result.ErrorMessage.Should().NotBeNull()
-            .And.ContainEquivalentOf("audit chain");
-        _hubContextMock.Verify(
-            h => h.SendCommandAsync(It.IsAny<Guid>(), It.IsAny<DispenserCommand>(), It.IsAny<CancellationToken>()),
-            Times.Never);
-    }
-
-    // ── Dispenser state paths ─────────────────────────────────────────────────
-
-    [Fact]
-    public async Task Handle_WhenDispenserIsOffline_ReturnsFailure()
-    {
-        // Arrange — prescription IS approved, but machine is Offline.
-        // The handler calls HealthTech API BEFORE checking dispenser state,
-        // so the mock must match the prescriptionId used in the command.
-        SetupApprovedPrescription("RX-003");
-        var offlineDispenser = CreateIdleDispenser();
-        offlineDispenser.GoOffline(); // State: Offline
-
-        _dispenserRepoMock.Setup(r => r.GetByIdAsync(offlineDispenser.Id, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(offlineDispenser);
-
-        var handler = CreateHandler();
-        var result = await handler.Handle(
-            new InitiateDispenseCommand(offlineDispenser.Id, "RX-003", "PATIENT-42"), CancellationToken.None);
-
-        result.Success.Should().BeFalse();
-        result.ErrorMessage.Should().Contain("not ready");
+        result.Error.Should().Be(InitiateDispenseError.Rejected);
+        result.ErrorMessage.Should().Be("Prescription 'RX-404' was not found in the HealthTech Orchestrator.");
     }
 
     [Fact]
-    public async Task Handle_WhenHealthTechApiThrows_ReturnsFailure()
+    public async Task Orchestrator_outage_is_reported_as_unavailable()
     {
-        // Arrange — simulate circuit breaker open / network error
-        _healthTechMock
-            .Setup(c => c.VerifyPrescriptionAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new HttpRequestException("Circuit breaker open"));
+        var dispenser = await SeedIdleDispenser();
+        _healthTech.Failure = new HttpRequestException("Circuit breaker open");
 
-        var dispenser = CreateIdleDispenser();
-        _dispenserRepoMock.Setup(r => r.GetByIdAsync(dispenser.Id, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(dispenser);
+        var result = await Handle(new InitiateDispenseCommand(dispenser.Id, "RX-003", "PATIENT-42"));
 
-        var handler = CreateHandler();
-        var result = await handler.Handle(
-            new InitiateDispenseCommand(dispenser.Id, "RX-004", "PATIENT-42"), CancellationToken.None);
-
-        result.Success.Should().BeFalse();
-        result.ErrorMessage.Should().Contain("unavailable");
+        result.Error.Should().Be(InitiateDispenseError.VerificationUnavailable);
+        result.ErrorMessage.Should().Be("Prescription verification service unavailable. Please try again later.");
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
-
-    private static Dispenser CreateIdleDispenser()
+    [Fact]
+    public async Task Offline_machine_is_rejected()
     {
-        var d = Dispenser.Create("TestMachine-01", "Pharmacy A", inventoryCapacity: 50);
+        var dispenser = await SeedIdleDispenser();
+        dispenser.GoOffline();
+        await _db.SaveChangesAsync();
+        _healthTech.Add(FakeHealthTechClient.Approved("RX-004"));
+
+        var result = await Handle(new InitiateDispenseCommand(dispenser.Id, "RX-004", "PATIENT-42"));
+
+        result.Error.Should().Be(InitiateDispenseError.Rejected);
+        result.ErrorMessage.Should().Be("Dispenser 'Machine-01' is not ready (status: Offline).");
+    }
+
+    [Fact]
+    public async Task Unknown_dispenser_is_reported_as_not_found()
+    {
+        var id = Guid.Parse("00000000-0000-0000-0000-000000000001");
+
+        var result = await Handle(new InitiateDispenseCommand(id, "RX-005", "PATIENT-42"));
+
+        result.Error.Should().Be(InitiateDispenseError.DispenserNotFound);
+        result.ErrorMessage.Should().Be("Dispenser 00000000-0000-0000-0000-000000000001 not found.");
+    }
+
+    [Fact]
+    public async Task Prescription_whose_earlier_request_failed_can_be_dispensed_again()
+    {
+        var dispenser = await SeedIdleDispenser();
+        _healthTech.Add(FakeHealthTechClient.Approved("RX-006"));
+        var first = await Handle(new InitiateDispenseCommand(dispenser.Id, "RX-006", "PATIENT-42"));
+        var firstRequest = await _db.DispenseRequests.SingleAsync();
+        firstRequest.MarkFailed("Payment failed: card declined");
+        await _db.SaveChangesAsync();
+
+        var second = await Handle(new InitiateDispenseCommand(dispenser.Id, "RX-006", "PATIENT-42"));
+        var third = await Handle(new InitiateDispenseCommand(dispenser.Id, "RX-006", "PATIENT-42"));
+
+        first.Error.Should().BeNull();
+        second.Error.Should().BeNull();
+        third.ErrorMessage.Should().Be("Prescription 'RX-006' already has a dispense request.");
+    }
+
+    private Task<InitiateDispenseResult> Handle(InitiateDispenseCommand cmd) =>
+        new InitiateDispenseHandler(_healthTech, new DispenserRepository(_db), new DispenseRequestRepository(_db), _db,
+            NullLogger<InitiateDispenseHandler>.Instance).Handle(cmd, CancellationToken.None);
+
+    private async Task<Dispenser> SeedIdleDispenser()
+    {
+        var d = Dispenser.Create("Machine-01", "Pharmacy A", inventoryCapacity: 50);
         d.GoOnline();
         d.UpdateInventory(30);
+        _db.Dispensers.Add(d);
+        await _db.SaveChangesAsync();
         return d;
-    }
-
-    private void SetupApprovedPrescription(string prescriptionId = "RX-001")
-    {
-        _healthTechMock
-            .Setup(c => c.VerifyPrescriptionAsync(prescriptionId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PrescriptionVerificationResult
-            {
-                PrescriptionId = prescriptionId,
-                ThreadId = $"session-{prescriptionId}",
-                IsApproved = true,
-                AuditChainValid = true,
-                SafetyApproved = true,
-                IsPendingApproval = false,
-                ProposedMedication = "Paracetamol",
-                Dosage = "500mg cada 8 horas",
-            });
     }
 }

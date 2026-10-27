@@ -1,149 +1,74 @@
 using MediatR;
 using Microsoft.AspNetCore.SignalR;
 using SmartDispenser.Core.Commands.UpdateMachineState;
-using SmartDispenser.Core.DTOs;
 using SmartDispenser.Core.Interfaces;
 
 namespace SmartDispenser.API.Hubs;
 
-/// <summary>
-/// Client-side method contract for the typed SignalR hub.
-/// Defines what the SERVER can call on each CONNECTED CLIENT.
-/// </summary>
-public interface IDispenserClient
+/// <summary>Methods the server calls on a connected machine.</summary>
+public interface IMachineClient
 {
-    Task ReceiveCommand(DispenserCommand command, CancellationToken ct = default);
-    Task MachineStateUpdated(DispenserStateDto state, CancellationToken ct = default);
-    Task DispenseResultReceived(DispenseResultNotification result, CancellationToken ct = default);
+    Task ReceiveDispenseCommand(DispenseCommand command);
 }
 
 /// <summary>
-/// SignalR Hub for bidirectional machine ↔ server communication.
-///
-/// Topology:
-///   - Each physical machine connects and joins its own group: Group("{machineId}")
-///   - Blazor dashboard clients join the "dashboard" group
-///   - Server sends typed commands to machine groups
-///   - Machines send telemetry events back (heartbeat, inventory, dispense results)
-///
-/// Authentication note: In production, machines authenticate with a signed JWT.
-/// The machine ID is extracted from the JWT "sub" claim. For the portfolio demo,
-/// the machine ID is passed as a query parameter (?machineId=...).
+/// SignalR endpoint for vending machines. A machine connects with <c>?machineId={guid}&amp;firmwareVersion={v}</c> and
+/// every later call acts on that machine only. This demo trusts the query string; a production
+/// deployment would take the machine id from an authenticated claim in OnConnectedAsync.
 /// </summary>
-public sealed class DispenserHub : Hub<IDispenserClient>
+public sealed class DispenserHub(IMediator mediator, ILogger<DispenserHub> logger) : Hub<IMachineClient>
 {
-    private readonly IMediator _mediator;
-    private readonly ILogger<DispenserHub> _logger;
+    private const string MachineIdKey = "machineId";
 
-    public DispenserHub(IMediator mediator, ILogger<DispenserHub> logger)
-    {
-        _mediator = mediator;
-        _logger = logger;
-    }
-
-    // ── Connection lifecycle ───────────────────────────────────────────────────
+    public static string MachineGroup(Guid dispenserId) => $"machine-{dispenserId}";
 
     public override async Task OnConnectedAsync()
     {
-        var machineId = Context.GetHttpContext()?.Request.Query["machineId"].ToString();
-        var isDashboard = Context.GetHttpContext()?.Request.Query["role"].ToString() == "dashboard";
-
-        if (isDashboard)
+        var query = Context.GetHttpContext()?.Request.Query;
+        if (!Guid.TryParse(query?["machineId"], out var dispenserId))
         {
-            await Groups.AddToGroupAsync(Context.ConnectionId, "dashboard");
-            _logger.LogInformation("Dashboard client connected: {ConnectionId}", Context.ConnectionId);
-        }
-        else if (Guid.TryParse(machineId, out var dispenserId))
-        {
-            await Groups.AddToGroupAsync(Context.ConnectionId, dispenserId.ToString());
-            Context.Items["dispenserId"] = dispenserId;
-
-            _logger.LogInformation("Machine {MachineId} connected: {ConnectionId}", dispenserId, Context.ConnectionId);
-
-            // Notify application layer
-            await _mediator.Send(new UpdateMachineStateCommand(dispenserId, MachineStateEvent.Online));
-        }
-        else
-        {
-            _logger.LogWarning("Connection rejected: missing or invalid machineId/role. ConnectionId={Id}", Context.ConnectionId);
+            logger.LogWarning("Rejected hub connection {ConnectionId} without a valid machineId", Context.ConnectionId);
             Context.Abort();
             return;
         }
 
+        Context.Items[MachineIdKey] = dispenserId;
+        await Groups.AddToGroupAsync(Context.ConnectionId, MachineGroup(dispenserId));
+        var firmwareVersion = query?["firmwareVersion"].ToString() is { Length: > 0 and <= 50 } version ? version : null;
+        await mediator.Send(new UpdateMachineStateCommand(dispenserId, MachineStateEvent.Online, FirmwareVersion: firmwareVersion));
         await base.OnConnectedAsync();
     }
 
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
-        if (Context.Items.TryGetValue("dispenserId", out var id) && id is Guid dispenserId)
-        {
-            _logger.LogInformation(
-                "Machine {MachineId} disconnected. Reason: {Reason}",
-                dispenserId, exception?.Message ?? "Clean disconnect");
-
-            await _mediator.Send(new UpdateMachineStateCommand(dispenserId, MachineStateEvent.Offline));
-        }
-
+        if (Context.Items.TryGetValue(MachineIdKey, out var id) && id is Guid dispenserId)
+            await mediator.Send(new UpdateMachineStateCommand(dispenserId, MachineStateEvent.Offline));
         await base.OnDisconnectedAsync(exception);
     }
 
-    // ── Machine → Server messages (called by physical machines) ───────────────
+    public Task SendHeartbeat() =>
+        Apply(MachineStateEvent.Heartbeat);
 
-    /// <summary>
-    /// Machine sends periodic heartbeat to confirm it is alive.
-    /// HeartbeatMonitor background service marks machines as Offline
-    /// if no heartbeat is received within the threshold.
-    /// </summary>
-    public async Task SendHeartbeat(string machineId)
+    public Task ReportInventory(int count) =>
+        Apply(MachineStateEvent.InventoryUpdated, inventoryCount: count);
+
+    public Task ConfirmDispense(Guid requestId) =>
+        Apply(MachineStateEvent.DispenseCompleted, requestId: requestId);
+
+    public Task ReportDispenseFailure(Guid requestId, string errorMessage) =>
+        Apply(MachineStateEvent.DispenseFailed, requestId: requestId, errorMessage: errorMessage);
+
+    private async Task Apply(MachineStateEvent evt, int? inventoryCount = null, Guid? requestId = null, string? errorMessage = null)
     {
-        if (!Guid.TryParse(machineId, out var dispenserId))
-            return;
-
-        await _mediator.Send(new UpdateMachineStateCommand(dispenserId, MachineStateEvent.Heartbeat));
-    }
-
-    /// <summary>Machine reports current inventory level after dispensing or manual restock.</summary>
-    public async Task ReportInventory(string machineId, int count)
-    {
-        if (!Guid.TryParse(machineId, out var dispenserId))
-            return;
-
-        _logger.LogInformation("Machine {Id} reported inventory: {Count}", machineId, count);
-        await _mediator.Send(new UpdateMachineStateCommand(
-            dispenserId, MachineStateEvent.InventoryUpdated, InventoryCount: count));
-    }
-
-    /// <summary>Machine confirms that a dispense command was executed successfully.</summary>
-    public async Task ConfirmDispense(string machineId, string requestId)
-    {
-        if (!Guid.TryParse(machineId, out var dispenserId) ||
-            !Guid.TryParse(requestId, out var dispenseRequestId))
-            return;
-
-        _logger.LogInformation(
-            "Machine {MachineId} confirmed dispense of request {RequestId}", machineId, requestId);
-
-        await _mediator.Send(new UpdateMachineStateCommand(
-            dispenserId,
-            MachineStateEvent.DispenseCompleted,
-            CompletedRequestId: dispenseRequestId));
-    }
-
-    /// <summary>Machine reports that it could not complete a dispense command.</summary>
-    public async Task ReportDispenseFailure(string machineId, string requestId, string errorMessage)
-    {
-        if (!Guid.TryParse(machineId, out var dispenserId) ||
-            !Guid.TryParse(requestId, out var dispenseRequestId))
-            return;
-
-        _logger.LogError(
-            "Machine {MachineId} failed to dispense request {RequestId}: {Error}",
-            machineId, requestId, errorMessage);
-
-        await _mediator.Send(new UpdateMachineStateCommand(
-            dispenserId,
-            MachineStateEvent.DispenseFailed,
-            CompletedRequestId: dispenseRequestId,
-            ErrorMessage: errorMessage));
+        if (!Context.Items.TryGetValue(MachineIdKey, out var id) || id is not Guid dispenserId)
+            throw new HubException("This connection is not bound to a machine.");
+        try
+        {
+            await mediator.Send(new UpdateMachineStateCommand(dispenserId, evt, inventoryCount, requestId, errorMessage));
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
+        {
+            throw new HubException(ex.Message);
+        }
     }
 }

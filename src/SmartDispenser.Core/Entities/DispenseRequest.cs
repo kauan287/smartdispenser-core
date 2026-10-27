@@ -1,11 +1,15 @@
 namespace SmartDispenser.Core.Entities;
 
-/// <summary>
-/// Tracks the full lifecycle of a single dispense request,
-/// from prescription verification through payment and physical dispensing.
-/// </summary>
 public sealed class DispenseRequest
 {
+    private static readonly Dictionary<DispenseRequestStatus, DispenseRequestStatus[]> AllowedTransitions = new()
+    {
+        [DispenseRequestStatus.PendingPayment] = [DispenseRequestStatus.Dispatched, DispenseRequestStatus.Failed],
+        [DispenseRequestStatus.Dispatched] = [DispenseRequestStatus.Completed, DispenseRequestStatus.Failed],
+        [DispenseRequestStatus.Completed] = [],
+        [DispenseRequestStatus.Failed] = [],
+    };
+
     public Guid Id { get; private set; }
     public Guid DispenserId { get; private set; }
     public string PrescriptionId { get; private set; } = string.Empty;
@@ -19,9 +23,6 @@ public sealed class DispenseRequest
     public DateTimeOffset UpdatedAt { get; private set; }
     public DateTimeOffset? CompletedAt { get; private set; }
 
-    // Correlation ID for distributed tracing across services
-    public string CorrelationId { get; private set; } = string.Empty;
-
     private DispenseRequest() { }
 
     public static DispenseRequest Create(
@@ -29,9 +30,9 @@ public sealed class DispenseRequest
         string prescriptionId,
         string patientIdentifier,
         string medication,
-        string dosage,
-        string? correlationId = null)
+        string dosage)
     {
+        var now = DateTimeOffset.UtcNow;
         return new DispenseRequest
         {
             Id = Guid.NewGuid(),
@@ -40,34 +41,42 @@ public sealed class DispenseRequest
             PatientIdentifier = patientIdentifier,
             Medication = medication,
             Dosage = dosage,
-            Status = DispenseRequestStatus.PendingVerification,
-            CreatedAt = DateTimeOffset.UtcNow,
-            UpdatedAt = DateTimeOffset.UtcNow,
-            CorrelationId = correlationId ?? Guid.NewGuid().ToString("N"),
+            Status = DispenseRequestStatus.PendingPayment,
+            CreatedAt = now,
+            UpdatedAt = now,
         };
     }
 
-    public void MarkPrescriptionVerified() => Transition(DispenseRequestStatus.PendingPayment);
-    public void MarkPaymentReceived(Guid paymentId)
+    public void RecordPayment(Guid paymentId)
     {
+        if (Status != DispenseRequestStatus.PendingPayment)
+            throw new InvalidOperationException($"Dispense request {Id} is not awaiting payment (status: {Status}).");
         PaymentId = paymentId;
-        Transition(DispenseRequestStatus.DispatchingToMachine);
-    }
-    public void MarkDispatched() => Transition(DispenseRequestStatus.WaitingForMachine);
-    public void MarkCompleted()
-    {
-        Transition(DispenseRequestStatus.Completed);
-        CompletedAt = DateTimeOffset.UtcNow;
-    }
-    public void MarkFailed(string reason)
-    {
-        FailureReason = reason;
-        Status = DispenseRequestStatus.Failed;
-        UpdatedAt = DateTimeOffset.UtcNow;
     }
 
-    private void Transition(DispenseRequestStatus next)
+    public void MarkDispatched()
     {
+        if (PaymentId is null)
+            throw new InvalidOperationException($"Dispense request {Id} cannot be dispatched before it is paid.");
+        TransitionTo(DispenseRequestStatus.Dispatched);
+    }
+
+    public void MarkCompleted()
+    {
+        TransitionTo(DispenseRequestStatus.Completed);
+        CompletedAt = UpdatedAt;
+    }
+
+    public void MarkFailed(string reason)
+    {
+        TransitionTo(DispenseRequestStatus.Failed);
+        FailureReason = reason;
+    }
+
+    private void TransitionTo(DispenseRequestStatus next)
+    {
+        if (!AllowedTransitions[Status].Contains(next))
+            throw new InvalidOperationException($"Dispense request {Id} cannot move from {Status} to {next}.");
         Status = next;
         UpdatedAt = DateTimeOffset.UtcNow;
     }

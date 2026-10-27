@@ -13,17 +13,7 @@ public sealed class DispenserRepository(AppDbContext db) : IDispenserRepository
     public async Task<IReadOnlyList<Dispenser>> GetAllAsync(CancellationToken ct = default) =>
         await db.Dispensers.OrderBy(d => d.Name).ToListAsync(ct);
 
-    public async Task AddAsync(Dispenser dispenser, CancellationToken ct = default)
-    {
-        db.Dispensers.Add(dispenser);
-        await db.SaveChangesAsync(ct);
-    }
-
-    public async Task UpdateAsync(Dispenser dispenser, CancellationToken ct = default)
-    {
-        db.Dispensers.Update(dispenser);
-        await db.SaveChangesAsync(ct);
-    }
+    public void Add(Dispenser dispenser) => db.Dispensers.Add(dispenser);
 }
 
 public sealed class PaymentRepository(AppDbContext db) : IPaymentRepository
@@ -31,20 +21,7 @@ public sealed class PaymentRepository(AppDbContext db) : IPaymentRepository
     public Task<Payment?> GetByIdempotencyKeyAsync(string key, CancellationToken ct = default) =>
         db.Payments.FirstOrDefaultAsync(p => p.IdempotencyKey == key, ct);
 
-    public Task<Payment?> GetByExternalTransactionIdAsync(string externalId, CancellationToken ct = default) =>
-        db.Payments.FirstOrDefaultAsync(p => p.ExternalTransactionId == externalId, ct);
-
-    public async Task AddAsync(Payment payment, CancellationToken ct = default)
-    {
-        db.Payments.Add(payment);
-        await db.SaveChangesAsync(ct);
-    }
-
-    public async Task UpdateAsync(Payment payment, CancellationToken ct = default)
-    {
-        db.Payments.Update(payment);
-        await db.SaveChangesAsync(ct);
-    }
+    public void Add(Payment payment) => db.Payments.Add(payment);
 }
 
 public sealed class DispenseRequestRepository(AppDbContext db) : IDispenseRequestRepository
@@ -52,21 +29,8 @@ public sealed class DispenseRequestRepository(AppDbContext db) : IDispenseReques
     public Task<DispenseRequest?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
         db.DispenseRequests.FirstOrDefaultAsync(r => r.Id == id, ct);
 
-    public async Task<IReadOnlyList<DispenseRequest>> GetRecentAsync(int count = 50, CancellationToken ct = default) =>
-        await db.DispenseRequests
-            .OrderByDescending(r => r.CreatedAt)
-            .Take(count)
-            .ToListAsync(ct);
+    public Task<bool> IsPrescriptionInUseAsync(string prescriptionId, CancellationToken ct = default) =>
+        db.DispenseRequests.AnyAsync(r => r.PrescriptionId == prescriptionId && r.Status != DispenseRequestStatus.Failed, ct);
 
-    public async Task AddAsync(DispenseRequest request, CancellationToken ct = default)
-    {
-        db.DispenseRequests.Add(request);
-        await db.SaveChangesAsync(ct);
-    }
-
-    public async Task UpdateAsync(DispenseRequest request, CancellationToken ct = default)
-    {
-        db.DispenseRequests.Update(request);
-        await db.SaveChangesAsync(ct);
-    }
+    public void Add(DispenseRequest request) => db.DispenseRequests.Add(request);
 }
