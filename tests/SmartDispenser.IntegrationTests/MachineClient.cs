@@ -17,10 +17,10 @@ public sealed class MachineClient : IAsyncDisposable
         _connection.On<JsonElement>("ReceiveDispenseCommand", command => Commands.Enqueue(command));
     }
 
-    public static async Task<MachineClient> ConnectAsync(AppFactory factory, Guid machineId)
+    public static async Task<MachineClient> ConnectAsync(AppFactory factory, Guid machineId, string firmwareVersion = "1.0.0")
     {
         var connection = new HubConnectionBuilder()
-            .WithUrl(new Uri(factory.Server.BaseAddress, $"/hubs/dispensers?machineId={machineId}"), o =>
+            .WithUrl(new Uri(factory.Server.BaseAddress, $"/hubs/dispensers?machineId={machineId}&firmwareVersion={firmwareVersion}"), o =>
             {
                 o.Transports = HttpTransportType.LongPolling;
                 o.HttpMessageHandlerFactory = _ => factory.Server.CreateHandler();

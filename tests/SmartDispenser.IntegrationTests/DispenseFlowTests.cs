@@ -36,8 +36,11 @@ public sealed class DispenseFlowTests(AppFactory factory) : IClassFixture<AppFac
         var rx = UniqueId("RX");
         factory.Orchestrator.Returns(rx, ApprovedPrescription(rx));
         var dispenserId = await RegisterDispenser();
-        await using var machine = await MachineClient.ConnectAsync(factory, dispenserId);
+        await using var machine = await MachineClient.ConnectAsync(factory, dispenserId, firmwareVersion: "2.4.1");
         await machine.ReportInventory(5);
+        var online = await _http.GetFromJsonAsync<JsonElement>($"/api/dispensers/{dispenserId}");
+        online.GetProperty("status").GetString().Should().Be("Idle");
+        online.GetProperty("firmwareVersion").GetString().Should().Be("2.4.1");
 
         var initiate = await _http.PostAsJsonAsync($"/api/dispensers/{dispenserId}/dispense",
             new { prescriptionId = rx, patientIdentifier = "PATIENT-42" });

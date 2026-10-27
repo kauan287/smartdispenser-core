@@ -106,4 +106,23 @@ public sealed class DispenserTests
         d.Status.Should().Be(DispenserStatus.InventoryEmpty);
         d.CanDispense().Should().BeFalse();
     }
+
+    [Fact]
+    public void Machine_in_error_returns_to_service_after_reconnecting()
+    {
+        var d = Dispenser.Create("Machine-01", "Floor 1", 50);
+        d.GoOnline();
+        d.UpdateInventory(3);
+        var requestId = Guid.NewGuid();
+        d.BeginDispensing(requestId);
+        d.FailDispensing(requestId);
+        d.Status.Should().Be(DispenserStatus.Error);
+
+        d.GoOffline();
+        d.GoOnline("2.0.0");
+
+        d.Status.Should().Be(DispenserStatus.Idle);
+        d.InventoryCount.Should().Be(3);
+        d.FirmwareVersion.Should().Be("2.0.0");
+    }
 }
