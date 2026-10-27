@@ -89,4 +89,21 @@ public sealed class DispenserTests
         d.InventoryCount.Should().Be(0);
         d.Status.Should().Be(DispenserStatus.InventoryEmpty);
     }
+
+    [Fact]
+    public void Machine_reporting_zero_stock_before_confirming_ends_empty_not_negative()
+    {
+        var d = Dispenser.Create("Machine-01", "Floor 1", 50);
+        d.GoOnline();
+        d.UpdateInventory(1);
+        var requestId = Guid.NewGuid();
+        d.BeginDispensing(requestId);
+        d.UpdateInventory(0);
+
+        d.CompleteDispensing(requestId);
+
+        d.InventoryCount.Should().Be(0);
+        d.Status.Should().Be(DispenserStatus.InventoryEmpty);
+        d.CanDispense().Should().BeFalse();
+    }
 }
