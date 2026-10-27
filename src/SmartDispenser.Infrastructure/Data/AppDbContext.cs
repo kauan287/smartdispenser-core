@@ -68,7 +68,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
                 .HasMaxLength(40);
             e.Property(r => r.FailureReason).HasMaxLength(500);
 
-            e.HasIndex(r => r.PrescriptionId);
+            e.HasIndex(r => r.PrescriptionId)
+                .IsUnique()
+                .HasFilter($"\"{nameof(DispenseRequest.Status)}\" <> '{nameof(DispenseRequestStatus.Failed)}'");
             e.HasIndex(r => r.Status);
             e.HasIndex(r => r.CreatedAt);
         });

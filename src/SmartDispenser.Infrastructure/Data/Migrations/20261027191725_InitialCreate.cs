@@ -104,7 +104,9 @@ namespace SmartDispenser.Infrastructure.Data.Migrations
             migrationBuilder.CreateIndex(
                 name: "IX_DispenseRequests_PrescriptionId",
                 table: "DispenseRequests",
-                column: "PrescriptionId");
+                column: "PrescriptionId",
+                unique: true,
+                filter: "\"Status\" <> 'Failed'");
 
             migrationBuilder.CreateIndex(
                 name: "IX_DispenseRequests_Status",

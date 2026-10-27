@@ -76,7 +76,9 @@ namespace SmartDispenser.Infrastructure.Data.Migrations
 
                     b.HasIndex("CreatedAt");
 
-                    b.HasIndex("PrescriptionId");
+                    b.HasIndex("PrescriptionId")
+                        .IsUnique()
+                        .HasFilter("\"Status\" <> 'Failed'");
 
                     b.HasIndex("Status");
 

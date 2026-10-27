@@ -12,7 +12,7 @@ using SmartDispenser.Infrastructure.Data;
 namespace SmartDispenser.Infrastructure.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261027190219_InitialCreate")]
+    [Migration("20261027191725_InitialCreate")]
     partial class InitialCreate
     {
         /// <inheritdoc />
@@ -79,7 +79,9 @@ namespace SmartDispenser.Infrastructure.Data.Migrations
 
                     b.HasIndex("CreatedAt");
 
-                    b.HasIndex("PrescriptionId");
+                    b.HasIndex("PrescriptionId")
+                        .IsUnique()
+                        .HasFilter("\"Status\" <> 'Failed'");
 
                     b.HasIndex("Status");
 
