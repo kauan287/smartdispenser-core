@@ -1,288 +1,239 @@
-# 💊 SmartDispenser Core
+# SmartDispenser Core
 
 [![CI](https://github.com/kauan287/smartdispenser-core/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/kauan287/smartdispenser-core/actions/workflows/ci.yml)
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4.svg?logo=dotnet)](https://dotnet.microsoft.com)
-[![ASP.NET Core](https://img.shields.io/badge/ASP.NET_Core-10.0-blue.svg)](https://learn.microsoft.com/aspnet/core)
-[![EF Core](https://img.shields.io/badge/EF_Core-10.0-green.svg)](https://learn.microsoft.com/ef/core)
-[![SignalR](https://img.shields.io/badge/SignalR-Realtime-orange.svg)](https://learn.microsoft.com/aspnet/core/signalr)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **Production-grade ASP.NET Core 10 backend** for a network of smart pharmaceutical vending machines.
-> Real-time hardware control via SignalR, cryptographic webhook validation, resilient integration with
-> the [HealthTech Agent Orchestrator](https://github.com/kauan287/healthtech-agent-orchestrator),
-> and a live Blazor Server dashboard.
+SmartDispenser Core is an ASP.NET Core 10 backend for a network of pharmaceutical vending machines. Before a machine releases a medication, the backend checks the prescription with the [HealthTech Agent Orchestrator](https://github.com/kauan287/healthtech-agent-orchestrator) and waits for a signed payment webhook. Machines connect over SignalR, and a Blazor Server dashboard shows their state live.
 
----
+## Part of a two-service system
 
-## 🔗 Part of the MedTech Ecosystem
-
-This is **Project 2** of a two-project portfolio demonstrating a full end-to-end digital health pipeline.
-A prescription must be approved by Project 1 before this project physically releases the medication.
-
-| Project | Stack | Role |
+| Service | Stack | Role |
 |---|---|---|
-| **[HealthTech Agent Orchestrator](https://github.com/kauan287/healthtech-agent-orchestrator)** [![CI](https://github.com/kauan287/healthtech-agent-orchestrator/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/kauan287/healthtech-agent-orchestrator/actions/workflows/ci.yml) | Python · FastAPI · LangGraph · PostgreSQL | AI triage, safety checks, doctor approval, cryptographic audit |
-| **SmartDispenser Core** *(this repo)* | C# · ASP.NET Core 10 · SignalR · Blazor | Real-time hardware control, payment webhooks, live dashboard |
+| [HealthTech Agent Orchestrator](https://github.com/kauan287/healthtech-agent-orchestrator) | Python, FastAPI, LangGraph, PostgreSQL | AI triage, allergy checks, doctor sign-off, tamper-evident audit trail |
+| SmartDispenser Core (this repository) | C#, ASP.NET Core 10, SignalR, Blazor Server, EF Core | Prescription gate, payment webhooks, machine control, dashboard |
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                     MedTech Ecosystem                               │
-│                                                                     │
-│  ┌─────────────────────────────────────────┐                       │
-│  │  HealthTech Agent Orchestrator (Proj 1) │                       │
-│  │  Python · FastAPI · LangGraph           │                       │
-│  │                                         │                       │
-│  │  Triage Agent → Safety Agent → HITL     │                       │
-│  │  Cryptographic SHA-256 Audit Chain      │                       │
-│  └────────────────────┬────────────────────┘                       │
-│                        │ HTTP (Polly circuit breaker)               │
-│                        ▼                                            │
-│  ┌─────────────────────────────────────────┐                       │
-│  │     SmartDispenser Core (this repo)     │                       │
-│  │     C# · ASP.NET Core 10 · SignalR      │                       │
-│  │                                         │                       │
-│  │  Verify prescription ✓                  │                       │
-│  │  Process payment (HMAC webhook) ✓       │                       │
-│  │  Send SignalR command → physical machine │                       │
-│  │  Blazor real-time dashboard             │                       │
-│  └────────────────────┬────────────────────┘                       │
-│                        │ SignalR (WebSocket)                        │
-│                        ▼                                            │
-│         🤖 Smart Vending Machines (Hardware)                        │
-└─────────────────────────────────────────────────────────────────────┘
-```
+A machine dispenses only when all of these hold:
 
-A medication is dispensed **only when ALL of the following are true**:
-1. 🧠 Triage AI proposed the medication
-2. 🛡️ Safety AI confirmed no allergy conflicts
-3. 👨‍⚕️ Doctor explicitly approved (HITL)
-4. 🔐 SHA-256 audit chain is cryptographically intact
-5. 💳 Payment webhook confirmed & signature validated
+1. The orchestrator knows the prescription and it proposes a medication and a dosage.
+2. The safety agent approved it (`safety_approved`).
+3. A doctor approved it and the session is not paused waiting for approval (`human_approved`, `is_paused_waiting_approval`).
+4. The orchestrator's audit chain is intact (`audit_chain_valid`).
+5. The prescription has no other dispense request that is pending, dispatched, or completed.
+6. The payment gateway confirmed payment in a webhook whose HMAC-SHA256 signature is valid.
 
-📦 **[HealthTech Agent Orchestrator → github.com/kauan287/healthtech-agent-orchestrator](https://github.com/kauan287/healthtech-agent-orchestrator)**
+## Quick start
 
----
+### Run locally with the in-memory database
 
-
-## ✨ Key Features
-
-| Feature | Details |
-|---|---|
-| **HMAC-SHA256 Webhook Validation** | Middleware validates signature before request reaches controllers; `FixedTimeEquals` prevents timing attacks |
-| **Outbox Pattern** | At-least-once delivery with exponential backoff (5s, 25s, 125s…); dead letter after 5 attempts |
-| **Machine State Machine** | `Offline → Idle → Dispensing → Error` — illegal transitions throw; prevents double-dispensing |
-| **SignalR Hub (Typed)** | Bidirectional machine ↔ server; machines join their own group; dashboard joins "dashboard" group |
-| **Polly Resilience Pipeline** | Retry (3×, exponential) + Circuit Breaker (opens after 5 failures) + Timeout (10s) |
-| **MediatR CQRS** | Every business action is a Command/Query handled by a dedicated Handler |
-| **EF Core + PostgreSQL** | Migrations, JSONB for OutboxMessage payload, unique indexes on idempotency keys |
-| **Blazor Server Dashboard** | Real-time machine grid via SignalR — no polling, no REST calls from UI |
-| **Background Services** | `OutboxProcessor` (5s poll) + `HeartbeatMonitor` (30s poll) |
-| **Rate Limiting** | Webhook endpoint: sliding window, 10 req/s per IP (built-in .NET 8+) |
-| **Health Checks** | `/health/live` (always) + `/health/ready` (DB + HealthTech API reachability) |
-| **Serilog Structured Logging** | JSON logs with correlation IDs, machine names, log level overrides per namespace |
-
----
-
-## 🛠️ Tech Stack
-
-| Layer | Technology |
-|---|---|
-| Runtime | .NET 9 / ASP.NET Core 9 |
-| Real-time | SignalR (WebSocket-first with SSE fallback) |
-| Dashboard | Blazor Server (Interactive Server Components) |
-| CQRS | MediatR 12 |
-| ORM | Entity Framework Core 9 + Npgsql |
-| Resilience | `Microsoft.Extensions.Http.Resilience` (Polly v8) |
-| Logging | Serilog + Console/File sinks |
-| API Docs | Swagger / OpenAPI |
-| Rate Limiting | Built-in `Microsoft.AspNetCore.RateLimiting` |
-| Tests | xUnit + Moq + FluentAssertions + coverlet |
-| CI/CD | GitHub Actions |
-| Containers | Docker + Docker Compose |
-
----
-
-## 🏗️ Architecture — Clean Architecture (4 Projects)
-
-```
-SmartDispenser.Core          ← Domain + Application (no external deps)
-  ├── Entities/               Dispenser (state machine), DispenseRequest, Payment, OutboxMessage
-  ├── Interfaces/             IDispenserRepository, IHealthTechApiClient, IDispenserHubContext
-  └── Commands/               InitiateDispense, ProcessPaymentWebhook, UpdateMachineState
-
-SmartDispenser.Infrastructure ← Adapters for Core interfaces
-  ├── Data/                   AppDbContext, EF Migrations
-  ├── ExternalServices/       HealthTechApiClient (Polly resilience)
-  ├── Repositories/           EF Core repository implementations
-  └── SignalR/                IDispenserHubContext implementation
-
-SmartDispenser.API            ← Entry point: Controllers + SignalR Hub + Blazor
-  ├── Controllers/            PaymentsController, DispensersController
-  ├── Hubs/                   DispenserHub (typed SignalR)
-  ├── Middleware/             WebhookSignatureMiddleware (HMAC-SHA256)
-  ├── BackgroundServices/     OutboxProcessor, HeartbeatMonitor
-  └── Components/Pages/       Dashboard.razor (real-time Blazor)
-
-SmartDispenser.UnitTests      ← xUnit + Moq + FluentAssertions
-  ├── Commands/               InitiateDispenseHandlerTests
-  └── Middleware/             PaymentWebhookValidationTests + DispenserStateMachineTests
-```
-
----
-
-## 🚀 Quick Start
-
-### Option 1: Docker Compose *(recommended)*
+You need the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0). No database or other service is required.
 
 ```bash
 git clone https://github.com/kauan287/smartdispenser-core.git
 cd smartdispenser-core
+dotnet run --project src/SmartDispenser.API
+```
 
-# Copy env template and set your webhook secret
-cp .env.example .env
-# Edit WEBHOOK_SECRET (must be 32+ chars)
+The `Development` profile in `launchSettings.json` listens on http://localhost:5000 and uses the EF Core in-memory provider. Data is lost when the process stops.
 
+- Swagger UI at http://localhost:5000/swagger
+- Dashboard at http://localhost:5000/dashboard
+- Liveness probe at http://localhost:5000/health/live
+
+In a second terminal, register a machine and run the smoke test:
+
+```bash
+curl -X POST http://localhost:5000/api/dispensers \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Lobby-01", "location": "Main lobby", "inventoryCapacity": 40}'
+
+WEBHOOK_SECRET=local-development-secret-not-for-production scripts/smoke.sh http://localhost:5000
+```
+
+### Run with Docker Compose and PostgreSQL
+
+```bash
+cp .env.example .env    # then set WEBHOOK_SECRET to a random value of 32+ characters
 docker compose up --build
 ```
 
-- **API + Swagger:** http://localhost:8001
-- **Blazor Dashboard:** http://localhost:8001/dashboard
-- **Health:** http://localhost:8001/health/live
-- **PostgreSQL:** `localhost:5433`
+The API listens on http://localhost:8001 and applies EF Core migrations at startup. PostgreSQL is published on `localhost:5433`. CI runs the same two commands, with `docker compose up -d`, and then `scripts/smoke.sh http://localhost:8001`.
 
-### Option 2: Local Development
+To dispense, the orchestrator must be reachable at `HEALTHTECH_API_URL` (default `http://host.docker.internal:8000`, an orchestrator on the host). Without it, `POST /api/dispensers/{id}/dispense` answers `503`.
 
-```bash
-# Requires .NET 9 SDK
-dotnet restore SmartDispenser.sln
-dotnet watch run --project src/SmartDispenser.API
+## Architecture
+
+The solution has three projects plus two test projects. Dependencies point inward. `API` depends on `Infrastructure` and `Core`, `Infrastructure` depends on `Core`, and `Core` depends only on MediatR and logging abstractions.
+
+```
+src/
+  SmartDispenser.Core/            Entities, commands and handlers, ports (interfaces)
+    Entities/                     Dispenser and DispenseRequest state machines, Payment, OutboxMessage
+    Commands/                     InitiateDispense, ProcessPaymentWebhook, UpdateMachineState
+    Interfaces/                   Repositories, IUnitOfWork, IDispenserNotifier, IHealthTechApiClient
+  SmartDispenser.Infrastructure/  EF Core (PostgreSQL or in-memory), migrations, repositories,
+                                  HealthTechApiClient with a resilience pipeline
+  SmartDispenser.API/             Controllers, SignalR hub, webhook signature middleware,
+                                  background services, Blazor Server dashboard
+tests/
+  SmartDispenser.UnitTests/         Domain, handlers on real repositories, orchestrator contract
+  SmartDispenser.IntegrationTests/  Full HTTP + SignalR flow on WebApplicationFactory
 ```
 
----
+### Dispense flow
 
-## 📡 API Reference
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant API as SmartDispenser API
+    participant O as HealthTech Orchestrator
+    participant G as Payment gateway
+    participant M as Machine (SignalR)
 
-### `POST /api/dispensers/{id}/dispense`
-Initiate medication dispensing (verifies prescription with HealthTech API first).
-
-```bash
-curl -X POST http://localhost:8001/api/dispensers/{dispenserId}/dispense \
-  -H "Content-Type: application/json" \
-  -d '{"prescriptionId": "RX-2024-001", "patientIdentifier": "PATIENT-42"}'
+    C->>API: POST /api/dispensers/{id}/dispense
+    API->>O: GET /api/v1/prescriptions/session-{prescription_id}
+    O-->>API: approval flags, medication, dosage
+    API-->>C: 202 {dispenseRequestId} (PendingPayment)
+    G->>API: POST /api/payments/webhook (X-Signature-SHA256)
+    API->>M: ReceiveDispenseCommand(requestId, medication, dosage)
+    Note over API: request Dispatched, machine Dispensing
+    M->>API: ConfirmDispense(requestId)
+    Note over API: request Completed, stock - 1, outbox message written
+    API-->>API: OutboxProcessor publishes the result to the dashboard
 ```
 
-Response `202 Accepted`:
-```json
-{ "dispenseRequestId": "3fa85f64-5717-4562-b3fc-2c963f66afa6" }
-```
+### State machines
 
-Response `422 Unprocessable` (if prescription not approved):
+`DispenseRequest` uses a transition table. A request moves `PendingPayment` to `Dispatched` to `Completed`, or to `Failed` from either non-terminal state. It cannot be dispatched before it is paid, paid twice, or failed after completion.
+
+`Dispenser` moves between `Offline`, `Idle`, `Dispensing`, `InventoryEmpty`, and `Error`. `Idle` always means stock is above zero. A restock moves an empty machine back to `Idle`, and dispensing the last unit moves it to `InventoryEmpty`. A machine can only confirm or fail the request it is dispensing. If it goes offline mid-dispense, that request fails.
+
+### Consistency
+
+- **One transaction per command.** Repositories only load and track entities. Each handler calls `IUnitOfWork.SaveChangesAsync` once, so the payment, the request, the dispenser, and the outbox message commit together or not at all.
+- **Idempotent webhooks.** A repeated idempotency key answers `{"received":true,"duplicate":true}` and changes nothing. A unique index on `Payments.IdempotencyKey` rejects a concurrent duplicate.
+- **Optimistic concurrency.** `Dispenser.Version` is a concurrency token that every state or stock change increments. If two commands race for one machine, the second save fails and rolls back, so a machine never receives two dispense commands.
+- **Transactional outbox.** When a dispense request reaches `Completed` or `Failed`, `AppDbContext.SaveChangesAsync` adds an `OutboxMessage` in the same transaction. `OutboxProcessor` polls every 2 seconds and publishes due messages to the dashboard. A failed delivery is retried after 5, 25, 125, and 625 seconds and is marked `DeadLetter` after the fifth failure.
+
+### Resilience and security
+
+- `HealthTechApiClient` uses `AddStandardResilienceHandler`: 3 retries with exponential backoff from 2 seconds, a 10-second timeout per attempt, a 30-second total timeout, and a circuit breaker that opens for 60 seconds when at least half of 5 or more calls in 30 seconds fail. A 404 means the prescription is unknown, and the API rejects it with `422`. An outage answers `503`.
+- `WebhookSignatureMiddleware` computes HMAC-SHA256 over the raw request body and compares it with `X-Signature-SHA256: sha256=<lowercase hex>` using `CryptographicOperations.FixedTimeEquals`. A missing or wrong signature answers `401`, and a body over 512 KB answers `413`. The app refuses to start when `Webhook:Secret` is shorter than 32 characters.
+- The webhook endpoint has a sliding-window rate limit of 10 requests per second, with a queue of 5. The limit is global, not per client. Excess requests get `429`.
+- `HeartbeatMonitor` checks every 30 seconds and marks a machine `Offline` after 90 seconds without a heartbeat.
+- `/health/live` runs no checks and reports whether the process is up. `/health/ready` checks the database connection.
+- Serilog writes structured logs to the console, including one line per HTTP request.
+
+## API
+
+Swagger UI at `/swagger` documents every endpoint. The OpenAPI document is at `/openapi/v1.json`.
+
+| Method and path | Purpose | Responses |
+|---|---|---|
+| `GET /api/dispensers` | List machines and their state | 200 |
+| `GET /api/dispensers/{id}` | Get one machine | 200, 404 |
+| `POST /api/dispensers` | Register a machine (starts `Offline`) | 201, 400 |
+| `POST /api/dispensers/{id}/dispense` | Verify a prescription and reserve a dispense request | 202, 404 (machine), 422 (rejected), 503 (orchestrator down) |
+| `GET /api/dispense-requests/{id}` | Get a dispense request's status | 200, 404 |
+| `POST /api/payments/webhook` | Payment gateway callback, signed | 200, 401, 413, 429 |
+
+A rejected dispense returns RFC 7807 problem details:
+
 ```json
 {
   "title": "Dispense request rejected",
-  "detail": "⚠️ Audit chain integrity check FAILED — possible data tampering.",
-  "status": 422
+  "status": 422,
+  "detail": "Audit chain integrity check failed: possible data tampering."
 }
 ```
 
-### `POST /api/payments/webhook`
-Payment gateway webhook (signature validated by middleware).
+Payment webhook body:
 
-```bash
-# Signature: sha256=<HMAC-SHA256(body, WEBHOOK_SECRET)>
-curl -X POST http://localhost:8001/api/payments/webhook \
-  -H "Content-Type: application/json" \
-  -H "X-Signature-SHA256: sha256=<computed_hmac>" \
-  -d '{
-    "transactionId": "TX-001",
-    "idempotencyKey": "idemp-abc123",
-    "dispenseRequestId": "<request-guid>",
-    "amount": 15.50,
-    "currency": "EUR",
-    "status": "confirmed",
-    "provider": "redsys",
-    "timestamp": "2024-01-01T12:00:00Z"
-  }'
+```json
+{
+  "transactionId": "TX-001",
+  "idempotencyKey": "idem-abc123",
+  "dispenseRequestId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "amount": 15.50,
+  "currency": "EUR",
+  "status": "confirmed",
+  "provider": "sandbox",
+  "timestamp": "2026-01-01T12:00:00Z"
+}
 ```
 
-### SignalR Hub — `wss://localhost:8001/hubs/dispensers`
-| Direction | Method | Description |
+Sign it with the shared secret:
+
+```bash
+SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" -hex | awk '{print $NF}')
+curl -X POST http://localhost:5000/api/payments/webhook \
+  -H "Content-Type: application/json" -H "X-Signature-SHA256: sha256=$SIG" -d "$BODY"
+```
+
+The webhook answers `200` for every signed request it processes, including one it cannot apply, such as an unknown request id. A gateway therefore does not retry a payload that can never succeed. The reason goes to the log.
+
+### Machine protocol (SignalR)
+
+A machine connects to `/hubs/dispensers?machineId={dispenser-id}`. Each call it makes applies to that machine.
+
+| Direction | Method | Effect |
 |---|---|---|
-| Machine → Server | `SendHeartbeat(machineId)` | Liveness ping |
-| Machine → Server | `ReportInventory(machineId, count)` | Inventory update |
-| Machine → Server | `ConfirmDispense(machineId, requestId)` | Dispense ACK |
-| Machine → Server | `ReportDispenseFailure(machineId, requestId, error)` | Dispense error |
-| Server → Machine | `ReceiveCommand(command)` | Dispense / Cancel / Reboot |
-| Server → Dashboard | `MachineStateUpdated(state)` | Real-time state push |
+| Machine to server | `SendHeartbeat()` | Records liveness. An `Offline` machine comes back online. |
+| Machine to server | `ReportInventory(int count)` | Sets the stock level. |
+| Machine to server | `ConfirmDispense(Guid requestId)` | Completes the request and decrements stock. |
+| Machine to server | `ReportDispenseFailure(Guid requestId, string error)` | Fails the request and moves the machine to `Error`. |
+| Server to machine | `ReceiveDispenseCommand({requestId, prescriptionId, medication, dosage})` | Dispense one unit. |
 
----
+`DispenseFlowTests` in the integration tests drives this protocol end to end with a real SignalR client.
 
-## 🧪 Testing
+### Orchestrator contract
 
-```bash
-# Run all unit tests
-dotnet test tests/SmartDispenser.UnitTests/ -v normal
+`HealthTechApiClient` calls `GET /api/v1/prescriptions/session-{prescription_id}` and reads these fields. It ignores fields it does not know.
 
-# With coverage report
-dotnet test tests/SmartDispenser.UnitTests/ --collect:"XPlat Code Coverage"
+```json
+{
+  "thread_id": "session-RX-2024-001",
+  "prescription_id": "RX-2024-001",
+  "proposed_medication": "Ibuprofen",
+  "dosage": "400 mg every 8 hours",
+  "safety_approved": true,
+  "risk_notes": null,
+  "human_approved": true,
+  "doctor_comments": "OK to dispense",
+  "is_paused_waiting_approval": false,
+  "audit_chain_valid": true
+}
 ```
 
-> Tests use Moq to mock all infrastructure (DB, SignalR, HTTP). No network or DB required.
+`HealthTechApiContractTests` deserializes this shape from a literal sample. A missing boolean reads as `false`, so a dropped approval field rejects the dispense rather than allowing it.
 
----
+## Testing
 
-## ⚖️ Trade-offs & Technical Decisions
+```bash
+dotnet test SmartDispenser.sln
+```
 
-### 1. Outbox Pattern vs. Fire-and-Forget for Webhook Events
+- **Unit tests** (50) cover the state machines, the outbox backoff, the HMAC middleware against a signature computed with `openssl`, and the three handlers. The handlers run on the real repositories over the in-memory provider. Separate tests cover a partial-save failure and a concurrent write to one machine.
+- **Integration tests** (7) host the API with `WebApplicationFactory`, connect a SignalR client as the machine, and stub the orchestrator's HTTP responses. They cover the full flow from reservation through payment and confirmation to the dashboard, plus replayed webhooks, unsigned webhooks, prescription reuse, unknown prescriptions, and the rate limit.
 
-**Decision:** Domain events (DispenseCompleted, PaymentConfirmed) are written to an `outbox_messages` table **in the same DB transaction** as the business write, then delivered by a background processor.
+To run the integration tests on PostgreSQL, start the Compose database and run `make test-postgres`. CI runs them on InMemory and on a PostgreSQL 16 service container.
 
-**Why:** "Fire-and-forget" async delivery (e.g., send HTTP webhook inside a request handler) fails silently if the server crashes between the DB commit and the HTTP call. The Outbox Pattern guarantees **at-least-once delivery**: if the processor crashes mid-delivery, on restart it finds the message still `Pending` and retries.
+## Design decisions
 
-**Trade-off:** This introduces a delivery delay (up to 5s polling interval) and eventual consistency. For prescription dispensing, this is acceptable — the machine receives its command synchronously via SignalR; the outbox is for *notification* of external systems (EHR, patient app), not for the core dispense flow.
+**Reserve first, dispatch on payment.** Verifying the prescription before payment lets the client show a rejection before the patient pays. The hardware command waits for the webhook, so an unpaid request never reaches a machine.
 
----
+**MediatR for commands, repositories for reads.** The three state-changing operations are MediatR handlers in `Core`, testable without ASP.NET. Read endpoints query repositories directly because they hold no business rules. MediatR stays on 12.x because later versions moved to a commercial license.
 
-### 2. Polly `StandardResilienceHandler` vs. Manual Policies
+**The dashboard runs in process.** Blazor Server already holds a SignalR circuit to the browser, so the dashboard subscribes to `DispenserNotifier` events inside the process. An earlier version opened a second SignalR client from the server back to its own public URL, which failed behind Docker port mapping. The trade-off is that dashboard events stay in one process. Several API instances would need a SignalR backplane and a shared event bus.
 
-**Decision:** Used `Microsoft.Extensions.Http.Resilience`'s `AddStandardResilienceHandler` (Polly v8 built-in for .NET 8+) instead of manually composing `Policy.WrapAsync(retry, circuitBreaker, timeout)`.
+**Machine identity comes from the query string.** This keeps the demo free of device certificates. Any client that knows a dispenser id can act as that machine. For production, `DispenserHub.OnConnectedAsync` should take the id from an authenticated claim, such as a device JWT `sub`.
 
-**Why:** The standard handler has sane defaults and is correctly ordered (timeout wraps retry wraps circuit breaker). Manual composition is error-prone — wrapping in the wrong order causes unexpected behavior (e.g., timeout applies per-total instead of per-attempt).
+## Known limitations
 
-**Trade-off:** Less control over individual policy parameters compared to fully custom pipelines. For the HealthTech API integration, the defaults are appropriate (3 retries, 2s exponential backoff, 50% failure ratio for circuit breaker).
+- A paid request that cannot be dispatched, for example because the machine went offline, is marked `Failed` with "Refund required". The service does not issue refunds.
+- The webhook does not check the amount against a price list.
+- The outbox delivers to the in-process dashboard only. No external webhook or message broker is wired.
 
----
+## License
 
-### 3. MediatR CQRS vs. Direct Service Calls
-
-**Decision:** All business operations go through MediatR `IRequest<T>` + `IRequestHandler<T>` instead of injecting services directly into controllers.
-
-**Why:** Enables adding cross-cutting concerns (logging, validation, caching) via MediatR Pipeline Behaviors without modifying handlers. Each handler is a self-contained class that can be unit tested with just its constructor dependencies. Controllers become thin orchestrators.
-
-**Trade-off:** Adds a layer of indirection. For CRUD operations without business logic, direct service calls would be simpler. MediatR pays off when you need to chain commands (payment confirmed → trigger dispense), add audit trails as behaviors, or scale handler complexity independently.
-
----
-
-### 4. Blazor Server vs. Blazor WebAssembly for Dashboard
-
-**Decision:** Blazor Server (Interactive Server Components) hosted within the same ASP.NET Core process, not a separate WASM app.
-
-**Why:** Blazor Server has a native SignalR connection back to the server, making real-time updates trivial. WASM would require: (1) a separate project, (2) exposing SignalR through CORS, (3) a public API for all dashboard queries, and (4) significant JS interop for WebSocket handling. For a monitoring dashboard with no offline requirement, Server wins.
-
-**Trade-off:** Every dashboard user requires a persistent SignalR connection to the server. With 1,000 concurrent dashboard users, this is 1,000 open WebSocket connections. For a hospital operations dashboard with tens of concurrent users, this is entirely acceptable.
-
----
-
-### 5. Machine Identity via Query Parameter vs. JWT in Production
-
-**Decision:** For the portfolio demo, machines authenticate to the SignalR hub via a `?machineId=` query parameter. Production-ready approach: machines hold a device certificate or a long-lived JWT with `sub=machineId`.
-
-**Why:** Device authentication is complex (certificate provisioning, rotation, revocation). The query parameter approach lets the demo run without a PKI infrastructure while the architecture clearly shows where auth would hook in (`OnConnectedAsync`).
-
-**Trade-off:** Without authentication, any client can impersonate a machine by spoofing its ID. The production fix is a single `Context.User.FindFirst("sub")` call in `OnConnectedAsync`, backed by a JWT middleware registered before `MapHub`.
-
----
-
-## 📄 License
-
-MIT — see [LICENSE](LICENSE) for details.
+MIT. See [LICENSE](LICENSE).
