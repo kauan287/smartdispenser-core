@@ -76,6 +76,15 @@ public sealed class WebhookSignatureMiddlewareTests
         response.Should().Be("downstream");
     }
 
+    [Fact]
+    public async Task Body_larger_than_512_KB_is_rejected_with_413()
+    {
+        var (status, _, downstreamBody) = await Send("/api/payments/webhook", new string('x', 512 * 1024 + 1), ValidSignature);
+
+        status.Should().Be(StatusCodes.Status413PayloadTooLarge);
+        downstreamBody.Should().BeNull();
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("short-secret")]

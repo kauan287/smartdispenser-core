@@ -67,6 +67,22 @@ public sealed class HealthTechApiContractTests
     }
 
     [Fact]
+    public async Task Missing_approval_field_fails_closed()
+    {
+        var withoutAuditFlag = """
+            {"thread_id":"session-RX-8","prescription_id":"RX-8","proposed_medication":"Ibuprofen","dosage":"400 mg",
+             "safety_approved":true,"risk_notes":null,"human_approved":true,"doctor_comments":null,
+             "is_paused_waiting_approval":false}
+            """;
+        var (client, _) = Client(HttpStatusCode.OK, withoutAuditFlag);
+
+        var result = await client.VerifyPrescriptionAsync("RX-8");
+
+        result!.AuditChainValid.Should().BeFalse();
+        result.RejectionReason.Should().Be("Audit chain integrity check failed: possible data tampering.");
+    }
+
+    [Fact]
     public async Task Not_found_returns_null()
     {
         var (client, _) = Client(HttpStatusCode.NotFound, """{"detail":"Not Found"}""");
