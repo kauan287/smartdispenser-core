@@ -24,6 +24,8 @@ A machine dispenses only when all of these hold:
 7. The prescription has no other dispense request that is pending, dispatched, interrupted, or completed.
 8. The payment gateway confirmed payment in a webhook whose HMAC-SHA256 signature is valid.
 
+To run both services together and check the whole pipeline, from triage to a confirmed dispense, follow [Run both services together](https://github.com/kauan287/healthtech-agent-orchestrator#run-both-services-together) in the orchestrator's README.
+
 ## Quick start
 
 ### Run locally with the in-memory database
