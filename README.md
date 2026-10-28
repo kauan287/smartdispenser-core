@@ -254,7 +254,7 @@ To run the integration tests on PostgreSQL, start the Compose database and run `
 - `OnDisconnectedAsync` does not check that the closing connection is the machine's current one. After a machine reconnects, its old connection can time out and mark the live machine `Offline` until its next heartbeat. A request in flight then becomes `Interrupted`, which keeps its prescription locked.
 - The in-memory provider has no transactions and no unique indexes. A save that fails partway can leave some rows behind, and two concurrent reservations of one prescription can both succeed. Use PostgreSQL for anything beyond a demo.
 - The webhook does not check the amount against a price list.
-- The outbox delivers to the in-process dashboard only. No external webhook or message broker is wired.
+- The outbox has one consumer today, the in-process dashboard. `DispenserNotifier.PublishDispenseResultAsync` raises an in-process event and returns a completed task, so delivery does not fail, and the retry, backoff, and dead-letter path guards nothing yet. That path pays off once a real external consumer is added, such as a completion webhook to the orchestrator or a message broker.
 
 ## License
 
