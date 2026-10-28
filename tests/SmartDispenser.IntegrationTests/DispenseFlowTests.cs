@@ -225,6 +225,39 @@ public sealed class DispenseFlowTests(AppFactory factory) : IClassFixture<AppFac
         retry.StatusCode.Should().Be(HttpStatusCode.Accepted);
     }
 
+    [Theory]
+    [InlineData("Ibuprofen", 422)]
+    [InlineData("amoxicillin", 202)]
+    public async Task Prescription_is_reserved_only_on_a_machine_stocking_its_medication(string medication, int expectedStatus)
+    {
+        var rx = UniqueId("RX");
+        factory.Orchestrator.Returns(rx, ApprovedPrescription(rx).Replace("\"Amoxicillin\"", $"\"{medication}\""));
+        var dispenserId = await RegisterDispenser(_http);
+        await using var machine = await MachineClient.ConnectAsync(factory, dispenserId);
+        await machine.ReportInventory(5);
+
+        var response = await _http.PostAsJsonAsync($"/api/dispensers/{dispenserId}/dispense",
+            new { prescriptionId = rx, patientIdentifier = "PATIENT-42" });
+
+        ((int)response.StatusCode).Should().Be(expectedStatus);
+        if (expectedStatus == 422)
+            (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("detail").GetString()
+                .Should().Be("This dispenser stocks Amoxicillin, but the prescription is for Ibuprofen.");
+        (await _http.GetFromJsonAsync<JsonElement>($"/api/dispensers/{dispenserId}")).GetProperty("medication").GetString()
+            .Should().Be("Amoxicillin");
+    }
+
+    [Fact]
+    public async Task Machine_cannot_be_registered_without_its_medication()
+    {
+        var response = await _http.PostAsJsonAsync("/api/dispensers",
+            new { name = "Machine-NoStock", location = "Pharmacy A", inventoryCapacity = 10 });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("errors").GetProperty("Medication")[0].GetString()
+            .Should().Be("The Medication field is required.");
+    }
+
     [Fact]
     public async Task Dashboard_renders()
     {
@@ -236,7 +269,7 @@ public sealed class DispenseFlowTests(AppFactory factory) : IClassFixture<AppFac
     internal static async Task<Guid> RegisterDispenser(HttpClient http)
     {
         var response = await http.PostAsJsonAsync("/api/dispensers",
-            new { name = $"Machine-{Guid.NewGuid():N}"[..16], location = "Pharmacy A", inventoryCapacity = 10 });
+            new { name = $"Machine-{Guid.NewGuid():N}"[..16], location = "Pharmacy A", medication = "Amoxicillin", inventoryCapacity = 10 });
         response.StatusCode.Should().Be(HttpStatusCode.Created);
         return (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
     }
