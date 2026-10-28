@@ -37,7 +37,7 @@ public sealed class HeartbeatMonitor : BackgroundService
 
             try
             {
-                await CheckForStaleMachinesAsync(stoppingToken);
+                await CheckAsync(stoppingToken);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -46,7 +46,7 @@ public sealed class HeartbeatMonitor : BackgroundService
         }
     }
 
-    private async Task CheckForStaleMachinesAsync(CancellationToken ct)
+    public async Task CheckAsync(CancellationToken ct)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var dispenserRepo = scope.ServiceProvider.GetRequiredService<IDispenserRepository>();
