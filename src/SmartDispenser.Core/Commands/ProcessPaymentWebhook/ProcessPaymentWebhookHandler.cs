@@ -44,12 +44,19 @@ public sealed class ProcessPaymentWebhookHandler(
         if (request.Status != DispenseRequestStatus.PendingPayment)
             return ProcessPaymentResult.Fail($"DispenseRequest {requestId} is not awaiting payment (status: {request.Status}).");
 
+        var outcome = Classify(payload.Status);
+        if (outcome == GatewayOutcome.Ignored)
+        {
+            logger.LogInformation("Ignored gateway status {Status} for dispense request {RequestId}", payload.Status, request.Id);
+            return ProcessPaymentResult.Ok();
+        }
+
         var payment = Payment.CreateFromWebhook(
             request.Id, payload.TransactionId, payload.IdempotencyKey,
             payload.Amount, payload.Currency, payload.Provider);
         paymentRepo.Add(payment);
 
-        if (!payload.Status.Equals("confirmed", StringComparison.OrdinalIgnoreCase))
+        if (outcome == GatewayOutcome.Failed)
         {
             payment.Fail(payload.GatewayResponse ?? "Gateway returned failure status.");
             request.MarkFailed($"Payment failed: {payment.GatewayResponse}");
@@ -82,4 +89,13 @@ public sealed class ProcessPaymentWebhookHandler(
         logger.LogInformation("Dispense request {RequestId} dispatched to machine {DispenserId}", request.Id, dispenser.Id);
         return ProcessPaymentResult.Ok();
     }
+
+    private enum GatewayOutcome { Confirmed, Failed, Ignored }
+
+    private static GatewayOutcome Classify(string status) => status.ToLowerInvariant() switch
+    {
+        "confirmed" => GatewayOutcome.Confirmed,
+        "failed" or "declined" or "cancelled" or "expired" => GatewayOutcome.Failed,
+        _ => GatewayOutcome.Ignored,
+    };
 }
