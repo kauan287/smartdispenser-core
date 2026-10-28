@@ -5,7 +5,8 @@ public sealed class DispenseRequest
     private static readonly Dictionary<DispenseRequestStatus, DispenseRequestStatus[]> AllowedTransitions = new()
     {
         [DispenseRequestStatus.PendingPayment] = [DispenseRequestStatus.Dispatched, DispenseRequestStatus.Failed],
-        [DispenseRequestStatus.Dispatched] = [DispenseRequestStatus.Completed, DispenseRequestStatus.Failed],
+        [DispenseRequestStatus.Dispatched] = [DispenseRequestStatus.Completed, DispenseRequestStatus.Failed, DispenseRequestStatus.Interrupted],
+        [DispenseRequestStatus.Interrupted] = [DispenseRequestStatus.Completed, DispenseRequestStatus.Failed],
         [DispenseRequestStatus.Completed] = [],
         [DispenseRequestStatus.Failed] = [],
     };
@@ -66,6 +67,9 @@ public sealed class DispenseRequest
         TransitionTo(DispenseRequestStatus.Completed);
         CompletedAt = UpdatedAt;
     }
+
+    /// <summary>The machine stopped answering after it received the command, so whether it dispensed is unknown.</summary>
+    public void MarkInterrupted() => TransitionTo(DispenseRequestStatus.Interrupted);
 
     public void MarkFailed(string reason)
     {

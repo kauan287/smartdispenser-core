@@ -5,7 +5,7 @@ public sealed class DispenserTests
     [Fact]
     public void New_dispenser_is_offline_with_zero_inventory()
     {
-        var d = Dispenser.Create("Machine-01", "Floor 1", 50);
+        var d = Dispenser.Create("Machine-01", "Floor 1", "Amoxicillin", 50);
 
         d.Status.Should().Be(DispenserStatus.Offline);
         d.InventoryCount.Should().Be(0);
@@ -15,7 +15,7 @@ public sealed class DispenserTests
     [Fact]
     public void Online_dispenser_with_inventory_can_dispense()
     {
-        var d = Dispenser.Create("Machine-01", "Floor 1", 50);
+        var d = Dispenser.Create("Machine-01", "Floor 1", "Amoxicillin", 50);
         d.GoOnline();
         d.UpdateInventory(10);
 
@@ -25,7 +25,7 @@ public sealed class DispenserTests
     [Fact]
     public void Dispensing_dispenser_cannot_begin_another_dispense()
     {
-        var d = Dispenser.Create("Machine-01", "Floor 1", 50);
+        var d = Dispenser.Create("Machine-01", "Floor 1", "Amoxicillin", 50);
         d.GoOnline();
         d.UpdateInventory(10);
         d.BeginDispensing(Guid.NewGuid());
@@ -39,7 +39,7 @@ public sealed class DispenserTests
     [Fact]
     public void Completing_a_dispense_decrements_inventory_and_returns_to_idle()
     {
-        var d = Dispenser.Create("Machine-01", "Floor 1", 50);
+        var d = Dispenser.Create("Machine-01", "Floor 1", "Amoxicillin", 50);
         d.GoOnline();
         d.UpdateInventory(10);
         var requestId = Guid.NewGuid();
@@ -53,7 +53,7 @@ public sealed class DispenserTests
     [Fact]
     public void Offline_dispenser_cannot_begin_dispensing()
     {
-        var d = Dispenser.Create("Machine-01", "Floor 1", 50);
+        var d = Dispenser.Create("Machine-01", "Floor 1", "Amoxicillin", 50);
 
         var act = () => d.BeginDispensing(Guid.NewGuid());
 
@@ -64,7 +64,7 @@ public sealed class DispenserTests
     [Fact]
     public void Restocking_an_empty_dispenser_makes_it_available_again()
     {
-        var d = Dispenser.Create("Machine-01", "Floor 1", 50);
+        var d = Dispenser.Create("Machine-01", "Floor 1", "Amoxicillin", 50);
         d.GoOnline();
         d.UpdateInventory(0);
         d.Status.Should().Be(DispenserStatus.InventoryEmpty);
@@ -78,7 +78,7 @@ public sealed class DispenserTests
     [Fact]
     public void Dispensing_the_last_unit_leaves_the_dispenser_empty()
     {
-        var d = Dispenser.Create("Machine-01", "Floor 1", 50);
+        var d = Dispenser.Create("Machine-01", "Floor 1", "Amoxicillin", 50);
         d.GoOnline();
         d.UpdateInventory(1);
         var requestId = Guid.NewGuid();
@@ -93,7 +93,7 @@ public sealed class DispenserTests
     [Fact]
     public void Machine_reporting_zero_stock_before_confirming_ends_empty_not_negative()
     {
-        var d = Dispenser.Create("Machine-01", "Floor 1", 50);
+        var d = Dispenser.Create("Machine-01", "Floor 1", "Amoxicillin", 50);
         d.GoOnline();
         d.UpdateInventory(1);
         var requestId = Guid.NewGuid();
@@ -110,7 +110,7 @@ public sealed class DispenserTests
     [Fact]
     public void Machine_in_error_returns_to_service_after_reconnecting()
     {
-        var d = Dispenser.Create("Machine-01", "Floor 1", 50);
+        var d = Dispenser.Create("Machine-01", "Floor 1", "Amoxicillin", 50);
         d.GoOnline();
         d.UpdateInventory(3);
         var requestId = Guid.NewGuid();

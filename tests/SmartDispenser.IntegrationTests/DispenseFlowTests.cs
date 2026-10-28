@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using FluentAssertions;
+using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
 using SmartDispenser.API.SignalR;
 using SmartDispenser.Core.Interfaces;
@@ -11,7 +12,7 @@ namespace SmartDispenser.IntegrationTests;
 
 public sealed class DispenseFlowTests(AppFactory factory) : IClassFixture<AppFactory>
 {
-    private static string ApprovedPrescription(string id) => $$"""
+    internal static string ApprovedPrescription(string id) => $$"""
         {
           "thread_id": "session-{{id}}",
           "prescription_id": "{{id}}",
@@ -26,7 +27,7 @@ public sealed class DispenseFlowTests(AppFactory factory) : IClassFixture<AppFac
         }
         """;
 
-    private static string UniqueId(string prefix) => $"{prefix}-{Guid.NewGuid():N}"[..(prefix.Length + 9)];
+    internal static string UniqueId(string prefix) => $"{prefix}-{Guid.NewGuid():N}"[..(prefix.Length + 9)];
 
     private readonly HttpClient _http = factory.CreateClient();
 
@@ -35,7 +36,7 @@ public sealed class DispenseFlowTests(AppFactory factory) : IClassFixture<AppFac
     {
         var rx = UniqueId("RX");
         factory.Orchestrator.Returns(rx, ApprovedPrescription(rx));
-        var dispenserId = await RegisterDispenser();
+        var dispenserId = await RegisterDispenser(_http);
         await using var machine = await MachineClient.ConnectAsync(factory, dispenserId, firmwareVersion: "2.4.1");
         await machine.ReportInventory(5);
         var online = await _http.GetFromJsonAsync<JsonElement>($"/api/dispensers/{dispenserId}");
@@ -83,7 +84,7 @@ public sealed class DispenseFlowTests(AppFactory factory) : IClassFixture<AppFac
     {
         var rx = UniqueId("RX");
         factory.Orchestrator.Returns(rx, ApprovedPrescription(rx));
-        var dispenserId = await RegisterDispenser();
+        var dispenserId = await RegisterDispenser(_http);
         await using var machine = await MachineClient.ConnectAsync(factory, dispenserId);
         await machine.ReportInventory(5);
         var initiate = await _http.PostAsJsonAsync($"/api/dispensers/{dispenserId}/dispense",
@@ -102,6 +103,31 @@ public sealed class DispenseFlowTests(AppFactory factory) : IClassFixture<AppFac
     }
 
     [Fact]
+    public async Task Pending_gateway_event_is_acknowledged_and_the_later_confirmation_dispenses()
+    {
+        var rx = UniqueId("RX");
+        factory.Orchestrator.Returns(rx, ApprovedPrescription(rx));
+        var dispenserId = await RegisterDispenser(_http);
+        await using var machine = await MachineClient.ConnectAsync(factory, dispenserId);
+        await machine.ReportInventory(5);
+        var initiate = await _http.PostAsJsonAsync($"/api/dispensers/{dispenserId}/dispense",
+            new { prescriptionId = rx, patientIdentifier = "PATIENT-42" });
+        var requestId = (await initiate.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("dispenseRequestId").GetGuid();
+        var transactionId = UniqueId("TX");
+
+        var pending = await _http.SendAsync(factory.SignedWebhook(PaymentJson(requestId, transactionId, "pending")));
+
+        pending.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await RequestStatus(requestId)).Should().Be("PendingPayment");
+
+        var confirmed = await _http.SendAsync(factory.SignedWebhook(PaymentJson(requestId, transactionId, "confirmed")));
+
+        confirmed.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await machine.NextCommand(TimeSpan.FromSeconds(5))).GetProperty("requestId").GetGuid().Should().Be(requestId);
+        (await RequestStatus(requestId)).Should().Be("Dispatched");
+    }
+
+    [Fact]
     public async Task Unsigned_webhook_is_rejected_and_nothing_is_dispensed()
     {
         var response = await _http.PostAsync("/api/payments/webhook",
@@ -114,7 +140,7 @@ public sealed class DispenseFlowTests(AppFactory factory) : IClassFixture<AppFac
     [Fact]
     public async Task Unknown_prescription_is_rejected_as_not_found()
     {
-        var dispenserId = await RegisterDispenser();
+        var dispenserId = await RegisterDispenser(_http);
 
         var response = await _http.PostAsJsonAsync($"/api/dispensers/{dispenserId}/dispense",
             new { prescriptionId = "RX-404", patientIdentifier = "PATIENT-42" });
@@ -129,8 +155,8 @@ public sealed class DispenseFlowTests(AppFactory factory) : IClassFixture<AppFac
     {
         var rx = UniqueId("RX");
         factory.Orchestrator.Returns(rx, ApprovedPrescription(rx));
-        var first = await RegisterDispenser();
-        var second = await RegisterDispenser();
+        var first = await RegisterDispenser(_http);
+        var second = await RegisterDispenser(_http);
         await using var firstMachine = await MachineClient.ConnectAsync(factory, first);
         await using var secondMachine = await MachineClient.ConnectAsync(factory, second);
         await firstMachine.ReportInventory(5);
@@ -148,6 +174,102 @@ public sealed class DispenseFlowTests(AppFactory factory) : IClassFixture<AppFac
     }
 
     [Fact]
+    public async Task Disconnect_mid_dispense_keeps_the_prescription_locked_until_the_machine_confirms()
+    {
+        var rx = UniqueId("RX");
+        factory.Orchestrator.Returns(rx, ApprovedPrescription(rx));
+        var first = await RegisterDispenser(_http);
+        var second = await RegisterDispenser(_http);
+        await using var secondMachine = await MachineClient.ConnectAsync(factory, second);
+        await secondMachine.ReportInventory(5);
+        var (firstMachine, requestId) = await Dispatch(first, rx);
+
+        await firstMachine.DisposeAsync();
+
+        (await EventualRequestStatus(requestId, "Interrupted")).Should().Be("Interrupted");
+        var reused = await _http.PostAsJsonAsync($"/api/dispensers/{second}/dispense",
+            new { prescriptionId = rx, patientIdentifier = "PATIENT-42" });
+        reused.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        (await reused.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("detail").GetString()
+            .Should().Be($"Prescription '{rx}' already has a dispense request.");
+
+        await using var reconnected = await MachineClient.ConnectAsync(factory, first);
+        await reconnected.ConfirmDispense(requestId);
+
+        (await RequestStatus(requestId)).Should().Be("Completed");
+        var dispenser = await _http.GetFromJsonAsync<JsonElement>($"/api/dispensers/{first}");
+        dispenser.GetProperty("status").GetString().Should().Be("Idle");
+        dispenser.GetProperty("inventoryCount").GetInt32().Should().Be(4);
+    }
+
+    [Fact]
+    public async Task Late_failure_report_for_an_interrupted_dispense_releases_the_prescription()
+    {
+        var rx = UniqueId("RX");
+        factory.Orchestrator.Returns(rx, ApprovedPrescription(rx));
+        var first = await RegisterDispenser(_http);
+        var second = await RegisterDispenser(_http);
+        await using var secondMachine = await MachineClient.ConnectAsync(factory, second);
+        await secondMachine.ReportInventory(5);
+        var (firstMachine, requestId) = await Dispatch(first, rx);
+        await firstMachine.DisposeAsync();
+        await EventualRequestStatus(requestId, "Interrupted");
+
+        await using var reconnected = await MachineClient.ConnectAsync(factory, first);
+        await reconnected.ReportDispenseFailure(requestId, "Motor jammed");
+
+        var failed = await _http.GetFromJsonAsync<JsonElement>($"/api/dispense-requests/{requestId}");
+        failed.GetProperty("status").GetString().Should().Be("Failed");
+        failed.GetProperty("failureReason").GetString().Should().Be("Motor jammed");
+        var retry = await _http.PostAsJsonAsync($"/api/dispensers/{second}/dispense",
+            new { prescriptionId = rx, patientIdentifier = "PATIENT-42" });
+        retry.StatusCode.Should().Be(HttpStatusCode.Accepted);
+    }
+
+    [Theory]
+    [InlineData("Ibuprofen", 422)]
+    [InlineData("amoxicillin", 202)]
+    public async Task Prescription_is_reserved_only_on_a_machine_stocking_its_medication(string medication, int expectedStatus)
+    {
+        var rx = UniqueId("RX");
+        factory.Orchestrator.Returns(rx, ApprovedPrescription(rx).Replace("\"Amoxicillin\"", $"\"{medication}\""));
+        var dispenserId = await RegisterDispenser(_http);
+        await using var machine = await MachineClient.ConnectAsync(factory, dispenserId);
+        await machine.ReportInventory(5);
+
+        var response = await _http.PostAsJsonAsync($"/api/dispensers/{dispenserId}/dispense",
+            new { prescriptionId = rx, patientIdentifier = "PATIENT-42" });
+
+        ((int)response.StatusCode).Should().Be(expectedStatus);
+        if (expectedStatus == 422)
+            (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("detail").GetString()
+                .Should().Be("This dispenser stocks Amoxicillin, but the prescription is for Ibuprofen.");
+        (await _http.GetFromJsonAsync<JsonElement>($"/api/dispensers/{dispenserId}")).GetProperty("medication").GetString()
+            .Should().Be("Amoxicillin");
+    }
+
+    [Fact]
+    public async Task Machine_cannot_be_registered_without_its_medication()
+    {
+        var response = await _http.PostAsJsonAsync("/api/dispensers",
+            new { name = "Machine-NoStock", location = "Pharmacy A", inventoryCapacity = 10 });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("errors").GetProperty("Medication")[0].GetString()
+            .Should().Be("The Medication field is required.");
+    }
+
+    [Fact]
+    public async Task Hub_drops_a_connection_for_an_unregistered_machine()
+    {
+        await using var stranger = await MachineClient.ConnectAsync(factory, Guid.Parse("00000000-0000-0000-0000-00000000beef"));
+
+        await stranger.Closed.WaitAsync(TimeSpan.FromSeconds(5));
+
+        stranger.State.Should().Be(HubConnectionState.Disconnected);
+    }
+
+    [Fact]
     public async Task Dashboard_renders()
     {
         var response = await _http.GetAsync("/dashboard");
@@ -155,10 +277,10 @@ public sealed class DispenseFlowTests(AppFactory factory) : IClassFixture<AppFac
         response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
-    private async Task<Guid> RegisterDispenser()
+    internal static async Task<Guid> RegisterDispenser(HttpClient http)
     {
-        var response = await _http.PostAsJsonAsync("/api/dispensers",
-            new { name = $"Machine-{Guid.NewGuid():N}"[..16], location = "Pharmacy A", inventoryCapacity = 10 });
+        var response = await http.PostAsJsonAsync("/api/dispensers",
+            new { name = $"Machine-{Guid.NewGuid():N}"[..16], location = "Pharmacy A", medication = "Amoxicillin", inventoryCapacity = 10 });
         response.StatusCode.Should().Be(HttpStatusCode.Created);
         return (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
     }
@@ -166,14 +288,36 @@ public sealed class DispenseFlowTests(AppFactory factory) : IClassFixture<AppFac
     private async Task<string?> RequestStatus(Guid requestId) =>
         (await _http.GetFromJsonAsync<JsonElement>($"/api/dispense-requests/{requestId}")).GetProperty("status").GetString();
 
-    private static string PaymentJson(Guid requestId, string transactionId) => JsonSerializer.Serialize(new
+    private async Task<string?> EventualRequestStatus(Guid requestId, string expected)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        string? status;
+        while ((status = await RequestStatus(requestId)) != expected && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+        return status;
+    }
+
+    private async Task<(MachineClient Machine, Guid RequestId)> Dispatch(Guid dispenserId, string rx)
+    {
+        var machine = await MachineClient.ConnectAsync(factory, dispenserId);
+        await machine.ReportInventory(5);
+        var initiate = await _http.PostAsJsonAsync($"/api/dispensers/{dispenserId}/dispense",
+            new { prescriptionId = rx, patientIdentifier = "PATIENT-42" });
+        initiate.StatusCode.Should().Be(HttpStatusCode.Accepted);
+        var requestId = (await initiate.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("dispenseRequestId").GetGuid();
+        (await _http.SendAsync(factory.SignedWebhook(PaymentJson(requestId, UniqueId("TX"))))).StatusCode.Should().Be(HttpStatusCode.OK);
+        (await machine.NextCommand(TimeSpan.FromSeconds(5))).GetProperty("requestId").GetGuid().Should().Be(requestId);
+        return (machine, requestId);
+    }
+
+    internal static string PaymentJson(Guid requestId, string transactionId, string status = "confirmed") => JsonSerializer.Serialize(new
     {
         transactionId,
-        idempotencyKey = $"idem-{transactionId}",
+        idempotencyKey = $"idem-{transactionId}-{status}",
         dispenseRequestId = requestId.ToString(),
         amount = 12.50m,
         currency = "EUR",
-        status = "confirmed",
+        status,
         provider = "sandbox",
         timestamp = "2026-10-27T12:00:00Z",
     });

@@ -40,6 +40,7 @@ namespace SmartDispenser.Infrastructure.Data.Migrations
                     Id = table.Column<Guid>(type: "uuid", nullable: false),
                     Name = table.Column<string>(type: "character varying(100)", maxLength: 100, nullable: false),
                     Location = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: false),
+                    Medication = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: false),
                     Status = table.Column<string>(type: "character varying(30)", maxLength: 30, nullable: false),
                     InventoryCount = table.Column<int>(type: "integer", nullable: false),
                     InventoryCapacity = table.Column<int>(type: "integer", nullable: false),

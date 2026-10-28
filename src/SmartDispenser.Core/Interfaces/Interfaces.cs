@@ -21,14 +21,20 @@ public interface IDispenseRequestRepository
     Task<DispenseRequest?> GetByIdAsync(Guid id, CancellationToken ct = default);
     /// <summary>True when the prescription has a dispense request that has not failed.</summary>
     Task<bool> IsPrescriptionInUseAsync(string prescriptionId, CancellationToken ct = default);
+    Task<IReadOnlyList<DispenseRequest>> GetDispatchedBeforeAsync(DateTimeOffset cutoff, CancellationToken ct = default);
     void Add(DispenseRequest request);
 }
 
 /// <summary>Commits every entity tracked in the current scope in one transaction. Repositories never save.</summary>
 public interface IUnitOfWork
 {
+    /// <exception cref="ConflictException">A concurrent command changed the same data first.</exception>
     Task<int> SaveChangesAsync(CancellationToken ct = default);
 }
+
+/// <summary>A concurrent command won the race for the same data. Nothing was saved, so the caller can retry.</summary>
+public sealed class ConflictException(string message, Exception innerException)
+    : InvalidOperationException(message, innerException);
 
 /// <summary>Pushes commands to machines and state changes to dashboards.</summary>
 public interface IDispenserNotifier

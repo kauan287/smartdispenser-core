@@ -5,6 +5,7 @@ public sealed class Dispenser
     public Guid Id { get; private set; }
     public string Name { get; private set; } = string.Empty;
     public string Location { get; private set; } = string.Empty;
+    public string Medication { get; private set; } = string.Empty;
     public DispenserStatus Status { get; private set; }
     public int InventoryCount { get; private set; }
     public int InventoryCapacity { get; private set; }
@@ -20,10 +21,11 @@ public sealed class Dispenser
 
     private Dispenser() { }
 
-    public static Dispenser Create(string name, string location, int inventoryCapacity)
+    public static Dispenser Create(string name, string location, string medication, int inventoryCapacity)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentException.ThrowIfNullOrWhiteSpace(location);
+        ArgumentException.ThrowIfNullOrWhiteSpace(medication);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(inventoryCapacity);
 
         var now = DateTimeOffset.UtcNow;
@@ -32,6 +34,7 @@ public sealed class Dispenser
             Id = Guid.NewGuid(),
             Name = name,
             Location = location,
+            Medication = medication,
             Status = DispenserStatus.Offline,
             InventoryCapacity = inventoryCapacity,
             LastHeartbeatAt = now,
@@ -41,6 +44,8 @@ public sealed class Dispenser
     }
 
     public bool CanDispense() => Status == DispenserStatus.Idle;
+
+    public bool Stocks(string medication) => string.Equals(Medication, medication, StringComparison.OrdinalIgnoreCase);
 
     public double InventoryPercentage => (double)InventoryCount / InventoryCapacity * 100;
 
@@ -62,6 +67,13 @@ public sealed class Dispenser
         SetStatus(ReadyStatus);
     }
 
+    public void RecordLateDispense()
+    {
+        InventoryCount = Math.Max(0, InventoryCount - 1);
+        LastDispenseAt = DateTimeOffset.UtcNow;
+        SetStatus(Status is DispenserStatus.Idle or DispenserStatus.InventoryEmpty ? ReadyStatus : Status);
+    }
+
     public void FailDispensing(Guid requestId)
     {
         EnsureDispensing(requestId, "fail");
@@ -72,13 +84,15 @@ public sealed class Dispenser
     public void GoOnline(string? firmwareVersion = null)
     {
         FirmwareVersion = firmwareVersion ?? FirmwareVersion;
-        RecordHeartbeat();
+        LastHeartbeatAt = DateTimeOffset.UtcNow;
+        SetStatus(Status == DispenserStatus.Offline ? ReadyStatus : Status);
     }
 
     public void RecordHeartbeat()
     {
         LastHeartbeatAt = DateTimeOffset.UtcNow;
-        SetStatus(Status == DispenserStatus.Offline ? ReadyStatus : Status);
+        if (Status == DispenserStatus.Offline)
+            SetStatus(ReadyStatus);
     }
 
     public void GoOffline()

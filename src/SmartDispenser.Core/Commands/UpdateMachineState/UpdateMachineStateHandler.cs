@@ -1,5 +1,4 @@
 using MediatR;
-using Microsoft.Extensions.Logging;
 using SmartDispenser.Core.DTOs;
 using SmartDispenser.Core.Entities;
 using SmartDispenser.Core.Interfaces;
@@ -22,26 +21,23 @@ public enum MachineStateEvent
     DispenseFailed,
     InventoryUpdated,
     Online,
-    Offline
+    Offline,
+    DispatchExpired
 }
 
 public sealed class UpdateMachineStateHandler(
     IDispenserRepository dispenserRepo,
     IDispenseRequestRepository requestRepo,
     IDispenserNotifier notifier,
-    IUnitOfWork unitOfWork,
-    ILogger<UpdateMachineStateHandler> logger)
+    IUnitOfWork unitOfWork)
     : IRequestHandler<UpdateMachineStateCommand, Unit>
 {
     public async Task<Unit> Handle(UpdateMachineStateCommand cmd, CancellationToken ct)
     {
-        var dispenser = await dispenserRepo.GetByIdAsync(cmd.DispenserId, ct);
-        if (dispenser is null)
-        {
-            logger.LogWarning("Received {Event} for unknown dispenser {Id}", cmd.Event, cmd.DispenserId);
-            return Unit.Value;
-        }
+        var dispenser = await dispenserRepo.GetByIdAsync(cmd.DispenserId, ct)
+            ?? throw new InvalidOperationException($"Dispenser {cmd.DispenserId} is not registered.");
 
+        var version = dispenser.Version;
         switch (cmd.Event)
         {
             case MachineStateEvent.Heartbeat:
@@ -56,7 +52,13 @@ public sealed class UpdateMachineStateHandler(
                 var interrupted = dispenser.CurrentDispenseRequestId;
                 dispenser.GoOffline();
                 if (interrupted is not null)
-                    await UpdateRequest(interrupted.Value, r => r.MarkFailed("Machine went offline during dispense."), ct);
+                    (await LoadRequest(interrupted.Value, ct)).MarkInterrupted();
+                break;
+
+            case MachineStateEvent.DispatchExpired:
+                var expired = await LoadOwnRequest(Required(cmd.RequestId));
+                dispenser.FailDispensing(expired.Id);
+                expired.MarkInterrupted();
                 break;
 
             case MachineStateEvent.InventoryUpdated:
@@ -64,30 +66,40 @@ public sealed class UpdateMachineStateHandler(
                 break;
 
             case MachineStateEvent.DispenseCompleted:
-                var completedId = Required(cmd.RequestId);
-                dispenser.CompleteDispensing(completedId);
-                await UpdateRequest(completedId, r => r.MarkCompleted(), ct);
+                var completed = await LoadOwnRequest(Required(cmd.RequestId));
+                if (completed.Status == DispenseRequestStatus.Interrupted)
+                    dispenser.RecordLateDispense();
+                else
+                    dispenser.CompleteDispensing(completed.Id);
+                completed.MarkCompleted();
                 break;
 
             case MachineStateEvent.DispenseFailed:
-                var failedId = Required(cmd.RequestId);
-                dispenser.FailDispensing(failedId);
-                await UpdateRequest(failedId, r => r.MarkFailed(cmd.ErrorMessage ?? "Machine reported a dispensing failure."), ct);
+                var failed = await LoadOwnRequest(Required(cmd.RequestId));
+                if (failed.Status != DispenseRequestStatus.Interrupted)
+                    dispenser.FailDispensing(failed.Id);
+                failed.MarkFailed(cmd.ErrorMessage ?? "Machine reported a dispensing failure.");
                 break;
         }
 
         await unitOfWork.SaveChangesAsync(ct);
-        await notifier.PublishStateAsync(DispenserStateDto.From(dispenser), ct);
+        if (dispenser.Version != version)
+            await notifier.PublishStateAsync(DispenserStateDto.From(dispenser), ct);
         return Unit.Value;
 
         T Required<T>(T? value) where T : struct =>
             value ?? throw new ArgumentException($"{cmd.Event} requires a value it did not receive.");
+
+        async Task<DispenseRequest> LoadOwnRequest(Guid requestId)
+        {
+            var request = await LoadRequest(requestId, ct);
+            return request.DispenserId == dispenser.Id
+                ? request
+                : throw new InvalidOperationException($"Dispense request {requestId} does not belong to dispenser '{dispenser.Name}'.");
+        }
     }
 
-    private async Task UpdateRequest(Guid requestId, Action<DispenseRequest> transition, CancellationToken ct)
-    {
-        var request = await requestRepo.GetByIdAsync(requestId, ct)
+    private async Task<DispenseRequest> LoadRequest(Guid requestId, CancellationToken ct) =>
+        await requestRepo.GetByIdAsync(requestId, ct)
             ?? throw new InvalidOperationException($"Dispense request {requestId} not found.");
-        transition(request);
-    }
 }

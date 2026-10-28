@@ -33,6 +33,7 @@ public sealed class InitiateDispenseHandlerTests
     [InlineData("tampered", "Audit chain integrity check failed: possible data tampering.")]
     [InlineData("tampered-and-pending", "Audit chain integrity check failed: possible data tampering.")]
     [InlineData("no-dosage", "Prescription has no medication or dosage.")]
+    [InlineData("other-medication", "This dispenser stocks Amoxicillin, but the prescription is for Ibuprofen.")]
     public async Task Prescription_failing_a_gate_is_rejected_and_nothing_is_reserved(string variant, string expectedReason)
     {
         var dispenser = await SeedIdleDispenser();
@@ -45,6 +46,7 @@ public sealed class InitiateDispenseHandlerTests
             "tampered" => approved with { AuditChainValid = false },
             "tampered-and-pending" => approved with { AuditChainValid = false, IsApproved = false, IsPendingApproval = true, SafetyApproved = false },
             "no-dosage" => approved with { Dosage = null },
+            "other-medication" => approved with { ProposedMedication = "Ibuprofen" },
             _ => throw new ArgumentOutOfRangeException(nameof(variant)),
         });
 
@@ -121,13 +123,55 @@ public sealed class InitiateDispenseHandlerTests
         third.ErrorMessage.Should().Be("Prescription 'RX-006' already has a dispense request.");
     }
 
+    [Fact]
+    public async Task Prescription_whose_earlier_dispense_was_interrupted_stays_reserved()
+    {
+        var dispenser = await SeedIdleDispenser();
+        _healthTech.Add(FakeHealthTechClient.Approved("RX-007"));
+        await Handle(new InitiateDispenseCommand(dispenser.Id, "RX-007", "PATIENT-42"));
+        var interrupted = await _db.DispenseRequests.SingleAsync();
+        interrupted.RecordPayment(Guid.NewGuid());
+        interrupted.MarkDispatched();
+        interrupted.MarkInterrupted();
+        await _db.SaveChangesAsync();
+
+        var again = await Handle(new InitiateDispenseCommand(dispenser.Id, "RX-007", "PATIENT-42"));
+
+        again.Error.Should().Be(InitiateDispenseError.Rejected);
+        again.ErrorMessage.Should().Be("Prescription 'RX-007' already has a dispense request.");
+    }
+
+    [Fact]
+    public async Task Reservation_rejected_by_the_unique_index_is_reported_like_the_in_use_check()
+    {
+        var dbName = Guid.NewGuid().ToString();
+        await using (var seed = TestDb.Create(dbName))
+        {
+            var d = Dispenser.Create("Machine-01", "Pharmacy A", "Amoxicillin", inventoryCapacity: 50);
+            d.GoOnline();
+            d.UpdateInventory(30);
+            seed.Dispensers.Add(d);
+            await seed.SaveChangesAsync();
+        }
+        await using var racing = TestDb.Create(dbName, new UniqueIndexRejectsDispenseRequests());
+        _healthTech.Add(FakeHealthTechClient.Approved("RX-008"));
+        var dispenserId = (await racing.Dispensers.SingleAsync()).Id;
+
+        var result = await new InitiateDispenseHandler(_healthTech, new DispenserRepository(racing), new DispenseRequestRepository(racing),
+                racing, NullLogger<InitiateDispenseHandler>.Instance)
+            .Handle(new InitiateDispenseCommand(dispenserId, "RX-008", "PATIENT-42"), CancellationToken.None);
+
+        result.Error.Should().Be(InitiateDispenseError.Rejected);
+        result.ErrorMessage.Should().Be("Prescription 'RX-008' already has a dispense request.");
+    }
+
     private Task<InitiateDispenseResult> Handle(InitiateDispenseCommand cmd) =>
         new InitiateDispenseHandler(_healthTech, new DispenserRepository(_db), new DispenseRequestRepository(_db), _db,
             NullLogger<InitiateDispenseHandler>.Instance).Handle(cmd, CancellationToken.None);
 
     private async Task<Dispenser> SeedIdleDispenser()
     {
-        var d = Dispenser.Create("Machine-01", "Pharmacy A", inventoryCapacity: 50);
+        var d = Dispenser.Create("Machine-01", "Pharmacy A", "Amoxicillin", inventoryCapacity: 50);
         d.GoOnline();
         d.UpdateInventory(30);
         _db.Dispensers.Add(d);

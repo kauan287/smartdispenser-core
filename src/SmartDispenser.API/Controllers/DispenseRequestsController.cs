@@ -9,7 +9,7 @@ namespace SmartDispenser.API.Controllers;
 [Produces("application/json")]
 public sealed class DispenseRequestsController(IDispenseRequestRepository requestRepo) : ControllerBase
 {
-    /// <summary>Get the status of a dispense request: PendingPayment, Dispatched, Completed or Failed.</summary>
+    /// <summary>Get the status of a dispense request: PendingPayment, Dispatched, Interrupted, Completed or Failed.</summary>
     [HttpGet("{id:guid}")]
     [ProducesResponseType<DispenseRequestDto>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using SmartDispenser.Core.Entities;
 using SmartDispenser.Core.Interfaces;
 
@@ -10,6 +11,22 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<DispenseRequest> DispenseRequests => Set<DispenseRequest>();
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
+
+    async Task<int> IUnitOfWork.SaveChangesAsync(CancellationToken ct)
+    {
+        try
+        {
+            return await SaveChangesAsync(ct);
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            throw new ConflictException("Another command changed the same data first. Nothing was saved.", ex);
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
+        {
+            throw new ConflictException("Another command saved the same data first. Nothing was saved.", ex);
+        }
+    }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
@@ -46,6 +63,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.HasKey(d => d.Id);
             e.Property(d => d.Name).HasMaxLength(100).IsRequired();
             e.Property(d => d.Location).HasMaxLength(200).IsRequired();
+            e.Property(d => d.Medication).HasMaxLength(200).IsRequired();
             e.Property(d => d.Status)
                 .HasConversion<string>()
                 .HasMaxLength(30);

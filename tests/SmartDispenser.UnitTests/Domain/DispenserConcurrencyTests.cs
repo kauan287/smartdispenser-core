@@ -6,7 +6,7 @@ public sealed class DispenserConcurrencyTests
     public async Task Two_requests_racing_for_the_same_idle_machine_cannot_both_dispatch()
     {
         var dbName = Guid.NewGuid().ToString();
-        var dispenser = Dispenser.Create("Machine-01", "Pharmacy A", 10);
+        var dispenser = Dispenser.Create("Machine-01", "Pharmacy A", "Amoxicillin", 10);
         dispenser.GoOnline();
         dispenser.UpdateInventory(5);
         await using (var seed = TestDb.Create(dbName))

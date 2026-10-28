@@ -34,6 +34,7 @@ public sealed record DispenserStateDto
     public required Guid Id { get; init; }
     public required string Name { get; init; }
     public required string Location { get; init; }
+    public required string Medication { get; init; }
     public required string Status { get; init; }
     public required int InventoryCount { get; init; }
     public required int InventoryCapacity { get; init; }
@@ -48,6 +49,7 @@ public sealed record DispenserStateDto
         Id = d.Id,
         Name = d.Name,
         Location = d.Location,
+        Medication = d.Medication,
         Status = d.Status.ToString(),
         InventoryCount = d.InventoryCount,
         InventoryCapacity = d.InventoryCapacity,
