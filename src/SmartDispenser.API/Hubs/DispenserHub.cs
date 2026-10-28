@@ -16,7 +16,7 @@ public interface IMachineClient
 /// every later call acts on that machine only. This demo trusts the query string; a production
 /// deployment would take the machine id from an authenticated claim in OnConnectedAsync.
 /// </summary>
-public sealed class DispenserHub(IMediator mediator, ILogger<DispenserHub> logger) : Hub<IMachineClient>
+public sealed class DispenserHub(IMediator mediator, IDispenserRepository dispenserRepo, ILogger<DispenserHub> logger) : Hub<IMachineClient>
 {
     private const string MachineIdKey = "machineId";
 
@@ -28,6 +28,12 @@ public sealed class DispenserHub(IMediator mediator, ILogger<DispenserHub> logge
         if (!Guid.TryParse(query?["machineId"], out var dispenserId))
         {
             logger.LogWarning("Rejected hub connection {ConnectionId} without a valid machineId", Context.ConnectionId);
+            Context.Abort();
+            return;
+        }
+        if (await dispenserRepo.GetByIdAsync(dispenserId) is null)
+        {
+            logger.LogWarning("Rejected hub connection {ConnectionId} for unregistered machine {DispenserId}", Context.ConnectionId, dispenserId);
             Context.Abort();
             return;
         }

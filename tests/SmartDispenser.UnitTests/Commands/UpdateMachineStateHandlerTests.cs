@@ -74,8 +74,7 @@ public sealed class UpdateMachineStateHandlerTests
         await using var webhook = TestDb.Create(dbName);
         var seenByWebhook = await webhook.Dispensers.SingleAsync();
         await using var hub = TestDb.Create(dbName);
-        await new UpdateMachineStateHandler(new DispenserRepository(hub), new DispenseRequestRepository(hub), _notifier, hub,
-                NullLogger<UpdateMachineStateHandler>.Instance)
+        await new UpdateMachineStateHandler(new DispenserRepository(hub), new DispenseRequestRepository(hub), _notifier, hub)
             .Handle(new UpdateMachineStateCommand(dispenser.Id, MachineStateEvent.Heartbeat), CancellationToken.None);
         var requestId = Guid.NewGuid();
 
@@ -155,8 +154,7 @@ public sealed class UpdateMachineStateHandlerTests
             new DispenserRepository(_db),
             new DispenseRequestRepository(_db),
             _notifier,
-            _db,
-            NullLogger<UpdateMachineStateHandler>.Instance).Handle(cmd, CancellationToken.None);
+            _db).Handle(cmd, CancellationToken.None);
 
     private async Task<DispenseRequest> Dispatch(Dispenser dispenser, string prescriptionId)
     {

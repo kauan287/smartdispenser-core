@@ -1,5 +1,4 @@
 using MediatR;
-using Microsoft.Extensions.Logging;
 using SmartDispenser.Core.DTOs;
 using SmartDispenser.Core.Entities;
 using SmartDispenser.Core.Interfaces;
@@ -30,18 +29,13 @@ public sealed class UpdateMachineStateHandler(
     IDispenserRepository dispenserRepo,
     IDispenseRequestRepository requestRepo,
     IDispenserNotifier notifier,
-    IUnitOfWork unitOfWork,
-    ILogger<UpdateMachineStateHandler> logger)
+    IUnitOfWork unitOfWork)
     : IRequestHandler<UpdateMachineStateCommand, Unit>
 {
     public async Task<Unit> Handle(UpdateMachineStateCommand cmd, CancellationToken ct)
     {
-        var dispenser = await dispenserRepo.GetByIdAsync(cmd.DispenserId, ct);
-        if (dispenser is null)
-        {
-            logger.LogWarning("Received {Event} for unknown dispenser {Id}", cmd.Event, cmd.DispenserId);
-            return Unit.Value;
-        }
+        var dispenser = await dispenserRepo.GetByIdAsync(cmd.DispenserId, ct)
+            ?? throw new InvalidOperationException($"Dispenser {cmd.DispenserId} is not registered.");
 
         var version = dispenser.Version;
         switch (cmd.Event)
