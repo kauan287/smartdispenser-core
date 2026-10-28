@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http.Connections;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.SignalR.Client;
 
 namespace SmartDispenser.IntegrationTests;
@@ -17,7 +18,7 @@ public sealed class MachineClient : IAsyncDisposable
         _connection.On<JsonElement>("ReceiveDispenseCommand", command => Commands.Enqueue(command));
     }
 
-    public static async Task<MachineClient> ConnectAsync(AppFactory factory, Guid machineId, string firmwareVersion = "1.0.0")
+    public static async Task<MachineClient> ConnectAsync(WebApplicationFactory<Program> factory, Guid machineId, string firmwareVersion = "1.0.0")
     {
         var connection = new HubConnectionBuilder()
             .WithUrl(new Uri(factory.Server.BaseAddress, $"/hubs/dispensers?machineId={machineId}&firmwareVersion={firmwareVersion}"), o =>

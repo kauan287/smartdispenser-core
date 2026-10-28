@@ -11,7 +11,7 @@ namespace SmartDispenser.IntegrationTests;
 
 public sealed class DispenseFlowTests(AppFactory factory) : IClassFixture<AppFactory>
 {
-    private static string ApprovedPrescription(string id) => $$"""
+    internal static string ApprovedPrescription(string id) => $$"""
         {
           "thread_id": "session-{{id}}",
           "prescription_id": "{{id}}",
@@ -26,7 +26,7 @@ public sealed class DispenseFlowTests(AppFactory factory) : IClassFixture<AppFac
         }
         """;
 
-    private static string UniqueId(string prefix) => $"{prefix}-{Guid.NewGuid():N}"[..(prefix.Length + 9)];
+    internal static string UniqueId(string prefix) => $"{prefix}-{Guid.NewGuid():N}"[..(prefix.Length + 9)];
 
     private readonly HttpClient _http = factory.CreateClient();
 
@@ -241,7 +241,7 @@ public sealed class DispenseFlowTests(AppFactory factory) : IClassFixture<AppFac
         return (machine, requestId);
     }
 
-    private static string PaymentJson(Guid requestId, string transactionId) => JsonSerializer.Serialize(new
+    internal static string PaymentJson(Guid requestId, string transactionId) => JsonSerializer.Serialize(new
     {
         transactionId,
         idempotencyKey = $"idem-{transactionId}",
