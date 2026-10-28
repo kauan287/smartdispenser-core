@@ -148,6 +148,59 @@ public sealed class DispenseFlowTests(AppFactory factory) : IClassFixture<AppFac
     }
 
     [Fact]
+    public async Task Disconnect_mid_dispense_keeps_the_prescription_locked_until_the_machine_confirms()
+    {
+        var rx = UniqueId("RX");
+        factory.Orchestrator.Returns(rx, ApprovedPrescription(rx));
+        var first = await RegisterDispenser();
+        var second = await RegisterDispenser();
+        await using var secondMachine = await MachineClient.ConnectAsync(factory, second);
+        await secondMachine.ReportInventory(5);
+        var (firstMachine, requestId) = await Dispatch(first, rx);
+
+        await firstMachine.DisposeAsync();
+
+        (await EventualRequestStatus(requestId, "Interrupted")).Should().Be("Interrupted");
+        var reused = await _http.PostAsJsonAsync($"/api/dispensers/{second}/dispense",
+            new { prescriptionId = rx, patientIdentifier = "PATIENT-42" });
+        reused.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        (await reused.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("detail").GetString()
+            .Should().Be($"Prescription '{rx}' already has a dispense request.");
+
+        await using var reconnected = await MachineClient.ConnectAsync(factory, first);
+        await reconnected.ConfirmDispense(requestId);
+
+        (await RequestStatus(requestId)).Should().Be("Completed");
+        var dispenser = await _http.GetFromJsonAsync<JsonElement>($"/api/dispensers/{first}");
+        dispenser.GetProperty("status").GetString().Should().Be("Idle");
+        dispenser.GetProperty("inventoryCount").GetInt32().Should().Be(4);
+    }
+
+    [Fact]
+    public async Task Late_failure_report_for_an_interrupted_dispense_releases_the_prescription()
+    {
+        var rx = UniqueId("RX");
+        factory.Orchestrator.Returns(rx, ApprovedPrescription(rx));
+        var first = await RegisterDispenser();
+        var second = await RegisterDispenser();
+        await using var secondMachine = await MachineClient.ConnectAsync(factory, second);
+        await secondMachine.ReportInventory(5);
+        var (firstMachine, requestId) = await Dispatch(first, rx);
+        await firstMachine.DisposeAsync();
+        await EventualRequestStatus(requestId, "Interrupted");
+
+        await using var reconnected = await MachineClient.ConnectAsync(factory, first);
+        await reconnected.ReportDispenseFailure(requestId, "Motor jammed");
+
+        var failed = await _http.GetFromJsonAsync<JsonElement>($"/api/dispense-requests/{requestId}");
+        failed.GetProperty("status").GetString().Should().Be("Failed");
+        failed.GetProperty("failureReason").GetString().Should().Be("Motor jammed");
+        var retry = await _http.PostAsJsonAsync($"/api/dispensers/{second}/dispense",
+            new { prescriptionId = rx, patientIdentifier = "PATIENT-42" });
+        retry.StatusCode.Should().Be(HttpStatusCode.Accepted);
+    }
+
+    [Fact]
     public async Task Dashboard_renders()
     {
         var response = await _http.GetAsync("/dashboard");
@@ -165,6 +218,28 @@ public sealed class DispenseFlowTests(AppFactory factory) : IClassFixture<AppFac
 
     private async Task<string?> RequestStatus(Guid requestId) =>
         (await _http.GetFromJsonAsync<JsonElement>($"/api/dispense-requests/{requestId}")).GetProperty("status").GetString();
+
+    private async Task<string?> EventualRequestStatus(Guid requestId, string expected)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        string? status;
+        while ((status = await RequestStatus(requestId)) != expected && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+        return status;
+    }
+
+    private async Task<(MachineClient Machine, Guid RequestId)> Dispatch(Guid dispenserId, string rx)
+    {
+        var machine = await MachineClient.ConnectAsync(factory, dispenserId);
+        await machine.ReportInventory(5);
+        var initiate = await _http.PostAsJsonAsync($"/api/dispensers/{dispenserId}/dispense",
+            new { prescriptionId = rx, patientIdentifier = "PATIENT-42" });
+        initiate.StatusCode.Should().Be(HttpStatusCode.Accepted);
+        var requestId = (await initiate.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("dispenseRequestId").GetGuid();
+        (await _http.SendAsync(factory.SignedWebhook(PaymentJson(requestId, UniqueId("TX"))))).StatusCode.Should().Be(HttpStatusCode.OK);
+        (await machine.NextCommand(TimeSpan.FromSeconds(5))).GetProperty("requestId").GetGuid().Should().Be(requestId);
+        return (machine, requestId);
+    }
 
     private static string PaymentJson(Guid requestId, string transactionId) => JsonSerializer.Serialize(new
     {

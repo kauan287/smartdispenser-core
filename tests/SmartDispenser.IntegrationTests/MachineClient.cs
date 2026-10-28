@@ -35,6 +35,9 @@ public sealed class MachineClient : IAsyncDisposable
 
     public Task ConfirmDispense(Guid requestId) => _connection.InvokeAsync("ConfirmDispense", requestId);
 
+    public Task ReportDispenseFailure(Guid requestId, string error) =>
+        _connection.InvokeAsync("ReportDispenseFailure", requestId, error);
+
     public async Task<JsonElement> NextCommand(TimeSpan timeout)
     {
         var deadline = DateTime.UtcNow + timeout;
