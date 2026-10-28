@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.AspNetCore.Http.Features;
 
 namespace SmartDispenser.API.Middleware;
 
@@ -41,23 +42,34 @@ public sealed class WebhookSignatureMiddleware
             return;
         }
 
-        if (context.Request.ContentLength > MaxBodyBytes)
-        {
-            context.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
-            return;
-        }
-
-        context.Request.EnableBuffering();
-        using var buffer = new MemoryStream();
-        await context.Request.Body.CopyToAsync(buffer, context.RequestAborted);
-        context.Request.Body.Position = 0;
-
         var received = context.Request.Headers[SignatureHeader].ToString();
         if (received.Length == 0)
         {
             await Reject(context, "Missing signature header.");
             return;
         }
+
+        if (context.Request.ContentLength > MaxBodyBytes)
+        {
+            context.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
+            return;
+        }
+
+        if (context.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } bodyLimit)
+            bodyLimit.MaxRequestBodySize = MaxBodyBytes;
+
+        context.Request.EnableBuffering();
+        using var buffer = new MemoryStream();
+        try
+        {
+            await context.Request.Body.CopyToAsync(buffer, context.RequestAborted);
+        }
+        catch (BadHttpRequestException ex) when (ex.StatusCode == StatusCodes.Status413PayloadTooLarge)
+        {
+            context.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
+            return;
+        }
+        context.Request.Body.Position = 0;
 
         var expected = "sha256=" + Convert.ToHexStringLower(HMACSHA256.HashData(_key, buffer.ToArray()));
         if (!CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(received), Encoding.UTF8.GetBytes(expected)))
