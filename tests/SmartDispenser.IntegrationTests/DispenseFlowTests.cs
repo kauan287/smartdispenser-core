@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using FluentAssertions;
+using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
 using SmartDispenser.API.SignalR;
 using SmartDispenser.Core.Interfaces;
@@ -256,6 +257,16 @@ public sealed class DispenseFlowTests(AppFactory factory) : IClassFixture<AppFac
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("errors").GetProperty("Medication")[0].GetString()
             .Should().Be("The Medication field is required.");
+    }
+
+    [Fact]
+    public async Task Hub_drops_a_connection_for_an_unregistered_machine()
+    {
+        await using var stranger = await MachineClient.ConnectAsync(factory, Guid.Parse("00000000-0000-0000-0000-00000000beef"));
+
+        await stranger.Closed.WaitAsync(TimeSpan.FromSeconds(5));
+
+        stranger.State.Should().Be(HubConnectionState.Disconnected);
     }
 
     [Fact]

@@ -23,6 +23,17 @@ public sealed class UpdateMachineStateHandlerTests
     }
 
     [Fact]
+    public async Task Event_for_an_unregistered_machine_is_an_error()
+    {
+        var unknown = Guid.Parse("00000000-0000-0000-0000-00000000beef");
+
+        var act = () => Handle(new UpdateMachineStateCommand(unknown, MachineStateEvent.Heartbeat));
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("Dispenser 00000000-0000-0000-0000-00000000beef is not registered.");
+    }
+
+    [Fact]
     public async Task Heartbeat_from_a_machine_that_is_already_online_publishes_nothing()
     {
         var dispenser = Dispenser.Create("Machine-01", "Floor 1", "Amoxicillin", 10);
