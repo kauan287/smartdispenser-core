@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using SmartDispenser.Core.Entities;
 using SmartDispenser.Core.Interfaces;
 
@@ -20,6 +21,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         catch (DbUpdateConcurrencyException ex)
         {
             throw new ConflictException("Another command changed the same data first. Nothing was saved.", ex);
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
+        {
+            throw new ConflictException("Another command saved the same data first. Nothing was saved.", ex);
         }
     }
 

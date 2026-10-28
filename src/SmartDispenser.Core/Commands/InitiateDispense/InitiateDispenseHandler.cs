@@ -65,12 +65,20 @@ public sealed class InitiateDispenseHandler(
             return Reject("Prescription has no medication or dosage.");
         if (!dispenser.CanDispense())
             return Reject($"Dispenser '{dispenser.Name}' is not ready (status: {dispenser.Status}).");
+        var inUse = $"Prescription '{cmd.PrescriptionId}' already has a dispense request.";
         if (await requestRepo.IsPrescriptionInUseAsync(cmd.PrescriptionId, ct))
-            return Reject($"Prescription '{cmd.PrescriptionId}' already has a dispense request.");
+            return Reject(inUse);
 
         var request = DispenseRequest.Create(cmd.DispenserId, cmd.PrescriptionId, cmd.PatientIdentifier, medication, dosage);
         requestRepo.Add(request);
-        await unitOfWork.SaveChangesAsync(ct);
+        try
+        {
+            await unitOfWork.SaveChangesAsync(ct);
+        }
+        catch (ConflictException)
+        {
+            return Reject(inUse);
+        }
 
         logger.LogInformation("Dispense request {RequestId} awaiting payment", request.Id);
         return InitiateDispenseResult.Ok(request.Id);
