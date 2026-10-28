@@ -35,7 +35,7 @@ public sealed class DispenseFlowTests(AppFactory factory) : IClassFixture<AppFac
     {
         var rx = UniqueId("RX");
         factory.Orchestrator.Returns(rx, ApprovedPrescription(rx));
-        var dispenserId = await RegisterDispenser();
+        var dispenserId = await RegisterDispenser(_http);
         await using var machine = await MachineClient.ConnectAsync(factory, dispenserId, firmwareVersion: "2.4.1");
         await machine.ReportInventory(5);
         var online = await _http.GetFromJsonAsync<JsonElement>($"/api/dispensers/{dispenserId}");
@@ -83,7 +83,7 @@ public sealed class DispenseFlowTests(AppFactory factory) : IClassFixture<AppFac
     {
         var rx = UniqueId("RX");
         factory.Orchestrator.Returns(rx, ApprovedPrescription(rx));
-        var dispenserId = await RegisterDispenser();
+        var dispenserId = await RegisterDispenser(_http);
         await using var machine = await MachineClient.ConnectAsync(factory, dispenserId);
         await machine.ReportInventory(5);
         var initiate = await _http.PostAsJsonAsync($"/api/dispensers/{dispenserId}/dispense",
@@ -114,7 +114,7 @@ public sealed class DispenseFlowTests(AppFactory factory) : IClassFixture<AppFac
     [Fact]
     public async Task Unknown_prescription_is_rejected_as_not_found()
     {
-        var dispenserId = await RegisterDispenser();
+        var dispenserId = await RegisterDispenser(_http);
 
         var response = await _http.PostAsJsonAsync($"/api/dispensers/{dispenserId}/dispense",
             new { prescriptionId = "RX-404", patientIdentifier = "PATIENT-42" });
@@ -129,8 +129,8 @@ public sealed class DispenseFlowTests(AppFactory factory) : IClassFixture<AppFac
     {
         var rx = UniqueId("RX");
         factory.Orchestrator.Returns(rx, ApprovedPrescription(rx));
-        var first = await RegisterDispenser();
-        var second = await RegisterDispenser();
+        var first = await RegisterDispenser(_http);
+        var second = await RegisterDispenser(_http);
         await using var firstMachine = await MachineClient.ConnectAsync(factory, first);
         await using var secondMachine = await MachineClient.ConnectAsync(factory, second);
         await firstMachine.ReportInventory(5);
@@ -152,8 +152,8 @@ public sealed class DispenseFlowTests(AppFactory factory) : IClassFixture<AppFac
     {
         var rx = UniqueId("RX");
         factory.Orchestrator.Returns(rx, ApprovedPrescription(rx));
-        var first = await RegisterDispenser();
-        var second = await RegisterDispenser();
+        var first = await RegisterDispenser(_http);
+        var second = await RegisterDispenser(_http);
         await using var secondMachine = await MachineClient.ConnectAsync(factory, second);
         await secondMachine.ReportInventory(5);
         var (firstMachine, requestId) = await Dispatch(first, rx);
@@ -181,8 +181,8 @@ public sealed class DispenseFlowTests(AppFactory factory) : IClassFixture<AppFac
     {
         var rx = UniqueId("RX");
         factory.Orchestrator.Returns(rx, ApprovedPrescription(rx));
-        var first = await RegisterDispenser();
-        var second = await RegisterDispenser();
+        var first = await RegisterDispenser(_http);
+        var second = await RegisterDispenser(_http);
         await using var secondMachine = await MachineClient.ConnectAsync(factory, second);
         await secondMachine.ReportInventory(5);
         var (firstMachine, requestId) = await Dispatch(first, rx);
@@ -208,9 +208,9 @@ public sealed class DispenseFlowTests(AppFactory factory) : IClassFixture<AppFac
         response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
-    private async Task<Guid> RegisterDispenser()
+    internal static async Task<Guid> RegisterDispenser(HttpClient http)
     {
-        var response = await _http.PostAsJsonAsync("/api/dispensers",
+        var response = await http.PostAsJsonAsync("/api/dispensers",
             new { name = $"Machine-{Guid.NewGuid():N}"[..16], location = "Pharmacy A", inventoryCapacity = 10 });
         response.StatusCode.Should().Be(HttpStatusCode.Created);
         return (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();

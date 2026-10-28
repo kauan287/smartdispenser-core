@@ -20,9 +20,7 @@ public sealed class DispatchDeadlineTests(AppFactory factory) : IClassFixture<Ap
         var http = app.CreateClient();
         var rx = UniqueId("RX");
         factory.Orchestrator.Returns(rx, ApprovedPrescription(rx));
-        var registered = await http.PostAsJsonAsync("/api/dispensers",
-            new { name = $"Machine-{Guid.NewGuid():N}"[..16], location = "Pharmacy A", inventoryCapacity = 10 });
-        var dispenserId = (await registered.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+        var dispenserId = await RegisterDispenser(http);
         await using var machine = await MachineClient.ConnectAsync(app, dispenserId);
         await machine.ReportInventory(5);
         var initiate = await http.PostAsJsonAsync($"/api/dispensers/{dispenserId}/dispense",

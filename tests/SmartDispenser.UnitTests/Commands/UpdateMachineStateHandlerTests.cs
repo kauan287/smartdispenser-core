@@ -6,6 +6,7 @@ namespace SmartDispenser.UnitTests.Commands;
 public sealed class UpdateMachineStateHandlerTests
 {
     private readonly SmartDispenser.Infrastructure.Data.AppDbContext _db = TestDb.Create();
+    private readonly RecordingNotifier _notifier = new();
 
     [Fact]
     public async Task Confirmation_for_another_request_leaves_the_current_dispense_running()
@@ -19,6 +20,61 @@ public sealed class UpdateMachineStateHandlerTests
         dispenser.Status.Should().Be(DispenserStatus.Dispensing);
         dispenser.InventoryCount.Should().Be(5);
         dispenser.CurrentDispenseRequestId.Should().Be(request.Id);
+    }
+
+    [Fact]
+    public async Task Heartbeat_from_a_machine_that_is_already_online_publishes_nothing()
+    {
+        var dispenser = Dispenser.Create("Machine-01", "Floor 1", 10);
+        dispenser.GoOnline();
+        dispenser.UpdateInventory(5);
+        _db.Dispensers.Add(dispenser);
+        await _db.SaveChangesAsync();
+
+        await Handle(new UpdateMachineStateCommand(dispenser.Id, MachineStateEvent.Heartbeat));
+
+        _notifier.States.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Heartbeat_from_an_offline_machine_brings_it_back_and_publishes_its_state()
+    {
+        var dispenser = Dispenser.Create("Machine-01", "Floor 1", 10);
+        _db.Dispensers.Add(dispenser);
+        await _db.SaveChangesAsync();
+
+        await Handle(new UpdateMachineStateCommand(dispenser.Id, MachineStateEvent.Heartbeat));
+
+        _notifier.States.Select(s => s.Status).Should().Equal("InventoryEmpty");
+    }
+
+    [Fact]
+    public async Task Heartbeat_does_not_make_a_concurrent_dispatch_lose_its_save()
+    {
+        var dbName = Guid.NewGuid().ToString();
+        var dispenser = Dispenser.Create("Machine-01", "Floor 1", 10);
+        dispenser.GoOnline();
+        dispenser.UpdateInventory(5);
+        await using (var seed = TestDb.Create(dbName))
+        {
+            seed.Dispensers.Add(dispenser);
+            await seed.SaveChangesAsync();
+        }
+        await using var webhook = TestDb.Create(dbName);
+        var seenByWebhook = await webhook.Dispensers.SingleAsync();
+        await using var hub = TestDb.Create(dbName);
+        await new UpdateMachineStateHandler(new DispenserRepository(hub), new DispenseRequestRepository(hub), _notifier, hub,
+                NullLogger<UpdateMachineStateHandler>.Instance)
+            .Handle(new UpdateMachineStateCommand(dispenser.Id, MachineStateEvent.Heartbeat), CancellationToken.None);
+        var requestId = Guid.NewGuid();
+
+        seenByWebhook.BeginDispensing(requestId);
+        await webhook.SaveChangesAsync();
+
+        await using var after = TestDb.Create(dbName);
+        var saved = await after.Dispensers.SingleAsync();
+        saved.Status.Should().Be(DispenserStatus.Dispensing);
+        saved.CurrentDispenseRequestId.Should().Be(requestId);
     }
 
     [Fact]
@@ -87,7 +143,7 @@ public sealed class UpdateMachineStateHandlerTests
         new UpdateMachineStateHandler(
             new DispenserRepository(_db),
             new DispenseRequestRepository(_db),
-            new RecordingNotifier(),
+            _notifier,
             _db,
             NullLogger<UpdateMachineStateHandler>.Instance).Handle(cmd, CancellationToken.None);
 
