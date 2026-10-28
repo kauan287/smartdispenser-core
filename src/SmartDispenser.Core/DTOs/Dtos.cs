@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using SmartDispenser.Core.Entities;
 
 namespace SmartDispenser.Core.DTOs;
@@ -78,13 +79,13 @@ public sealed record DispenseRequestDto(
 
 public sealed record PaymentWebhookPayload
 {
-    public required string TransactionId { get; init; }
-    public required string IdempotencyKey { get; init; }
+    [MaxLength(Payment.TransactionIdMaxLength)] public required string TransactionId { get; init; }
+    [MaxLength(Payment.IdempotencyKeyMaxLength)] public required string IdempotencyKey { get; init; }
     public required string DispenseRequestId { get; init; }
     public required decimal Amount { get; init; }
-    public required string Currency { get; init; }
+    [MaxLength(Payment.CurrencyMaxLength)] public required string Currency { get; init; }
     public required string Status { get; init; }
-    public required string Provider { get; init; }
-    public string? GatewayResponse { get; init; }
+    [MaxLength(Payment.ProviderMaxLength)] public required string Provider { get; init; }
+    [MaxLength(Payment.GatewayResponseMaxLength)] public string? GatewayResponse { get; init; }
     public required DateTimeOffset Timestamp { get; init; }
 }

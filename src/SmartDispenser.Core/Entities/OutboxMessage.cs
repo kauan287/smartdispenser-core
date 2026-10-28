@@ -15,6 +15,7 @@ public sealed class OutboxMessage
     public DateTimeOffset? NextRetryAt { get; private set; }
 
     public const int MaxRetries = 5;
+    public const int LastErrorMaxLength = 2000;
 
     private OutboxMessage() { }
 
@@ -45,7 +46,7 @@ public sealed class OutboxMessage
     public void RecordFailure(string error)
     {
         RetryCount++;
-        LastError = error;
+        LastError = error.Length <= LastErrorMaxLength ? error : error[..LastErrorMaxLength];
 
         if (RetryCount >= MaxRetries)
         {

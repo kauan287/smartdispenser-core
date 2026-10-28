@@ -2,6 +2,12 @@ namespace SmartDispenser.Core.Entities;
 
 public sealed class Payment
 {
+    public const int TransactionIdMaxLength = 100;
+    public const int IdempotencyKeyMaxLength = 100;
+    public const int CurrencyMaxLength = 10;
+    public const int ProviderMaxLength = 50;
+    public const int GatewayResponseMaxLength = 1000;
+
     public Guid Id { get; private set; }
     public Guid DispenseRequestId { get; private set; }
     public string ExternalTransactionId { get; private set; } = string.Empty;

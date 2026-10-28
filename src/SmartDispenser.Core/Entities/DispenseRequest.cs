@@ -11,6 +11,9 @@ public sealed class DispenseRequest
         [DispenseRequestStatus.Failed] = [],
     };
 
+    public const int DosageMaxLength = 100;
+    public const int FailureReasonMaxLength = 500;
+
     public Guid Id { get; private set; }
     public Guid DispenserId { get; private set; }
     public string PrescriptionId { get; private set; } = string.Empty;
@@ -74,7 +77,7 @@ public sealed class DispenseRequest
     public void MarkFailed(string reason)
     {
         TransitionTo(DispenseRequestStatus.Failed);
-        FailureReason = reason;
+        FailureReason = reason.Length <= FailureReasonMaxLength ? reason : reason[..FailureReasonMaxLength];
     }
 
     private void TransitionTo(DispenseRequestStatus next)
