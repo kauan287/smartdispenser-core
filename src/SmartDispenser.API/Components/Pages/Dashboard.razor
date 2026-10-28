@@ -44,7 +44,6 @@ else
                     </div>
                 </div>
                 <div class="machine-meta">
-                    <span>Heartbeat @FormatRelative(machine.LastHeartbeatAt)</span>
                     @if (machine.LastDispenseAt is { } lastDispense)
                     {
                         <span>Last dispense @FormatRelative(lastDispense)</span>

@@ -79,13 +79,15 @@ public sealed class Dispenser
     public void GoOnline(string? firmwareVersion = null)
     {
         FirmwareVersion = firmwareVersion ?? FirmwareVersion;
-        RecordHeartbeat();
+        LastHeartbeatAt = DateTimeOffset.UtcNow;
+        SetStatus(Status == DispenserStatus.Offline ? ReadyStatus : Status);
     }
 
     public void RecordHeartbeat()
     {
         LastHeartbeatAt = DateTimeOffset.UtcNow;
-        SetStatus(Status == DispenserStatus.Offline ? ReadyStatus : Status);
+        if (Status == DispenserStatus.Offline)
+            SetStatus(ReadyStatus);
     }
 
     public void GoOffline()

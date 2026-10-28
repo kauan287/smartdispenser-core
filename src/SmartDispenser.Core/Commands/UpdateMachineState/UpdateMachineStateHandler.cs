@@ -43,6 +43,7 @@ public sealed class UpdateMachineStateHandler(
             return Unit.Value;
         }
 
+        var version = dispenser.Version;
         switch (cmd.Event)
         {
             case MachineStateEvent.Heartbeat:
@@ -88,7 +89,8 @@ public sealed class UpdateMachineStateHandler(
         }
 
         await unitOfWork.SaveChangesAsync(ct);
-        await notifier.PublishStateAsync(DispenserStateDto.From(dispenser), ct);
+        if (dispenser.Version != version)
+            await notifier.PublishStateAsync(DispenserStateDto.From(dispenser), ct);
         return Unit.Value;
 
         T Required<T>(T? value) where T : struct =>

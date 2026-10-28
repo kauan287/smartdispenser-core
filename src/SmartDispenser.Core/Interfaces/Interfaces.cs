@@ -28,8 +28,13 @@ public interface IDispenseRequestRepository
 /// <summary>Commits every entity tracked in the current scope in one transaction. Repositories never save.</summary>
 public interface IUnitOfWork
 {
+    /// <exception cref="ConflictException">A concurrent command changed the same data first.</exception>
     Task<int> SaveChangesAsync(CancellationToken ct = default);
 }
+
+/// <summary>A concurrent command won the race for the same data. Nothing was saved, so the caller can retry.</summary>
+public sealed class ConflictException(string message, Exception innerException)
+    : InvalidOperationException(message, innerException);
 
 /// <summary>Pushes commands to machines and state changes to dashboards.</summary>
 public interface IDispenserNotifier
