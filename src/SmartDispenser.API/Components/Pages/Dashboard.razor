@@ -29,7 +29,7 @@ else
             <div class="machine-card @StatusClass(machine.Status)">
                 <div class="machine-header">
                     <span class="machine-name">@machine.Name</span>
-                    <span class="status-badge @StatusClass(machine.Status)">@machine.Status</span>
+                    <span class="status-badge @StatusClass(machine.Status)">@StatusLabel(machine.Status)</span>
                 </div>
                 <div class="machine-location">@machine.Location &bull; @machine.Medication</div>
                 <div class="inventory-bar-container">
@@ -119,6 +119,8 @@ else
         "InventoryEmpty" => "status-empty",
         _ => "status-offline",
     };
+
+    private static string StatusLabel(string status) => status == "InventoryEmpty" ? "Out of stock" : status;
 
     private static string InventoryClass(double pct) => pct switch
     {
