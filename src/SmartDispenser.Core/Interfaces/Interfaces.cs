@@ -21,6 +21,7 @@ public interface IDispenseRequestRepository
     Task<DispenseRequest?> GetByIdAsync(Guid id, CancellationToken ct = default);
     /// <summary>True when the prescription has a dispense request that has not failed.</summary>
     Task<bool> IsPrescriptionInUseAsync(string prescriptionId, CancellationToken ct = default);
+    Task<IReadOnlyList<DispenseRequest>> GetDispatchedBeforeAsync(DateTimeOffset cutoff, CancellationToken ct = default);
     void Add(DispenseRequest request);
 }
 

@@ -22,7 +22,8 @@ public enum MachineStateEvent
     DispenseFailed,
     InventoryUpdated,
     Online,
-    Offline
+    Offline,
+    DispatchExpired
 }
 
 public sealed class UpdateMachineStateHandler(
@@ -57,6 +58,12 @@ public sealed class UpdateMachineStateHandler(
                 dispenser.GoOffline();
                 if (interrupted is not null)
                     (await LoadRequest(interrupted.Value, ct)).MarkInterrupted();
+                break;
+
+            case MachineStateEvent.DispatchExpired:
+                var expired = await LoadOwnRequest(Required(cmd.RequestId));
+                dispenser.FailDispensing(expired.Id);
+                expired.MarkInterrupted();
                 break;
 
             case MachineStateEvent.InventoryUpdated:

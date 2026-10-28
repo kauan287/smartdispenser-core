@@ -9,27 +9,31 @@ namespace SmartDispenser.API.BackgroundServices;
 
 /// <summary>
 /// Marks machines Offline after 90 s without a heartbeat. SignalR does not always raise
-/// OnDisconnectedAsync promptly when a machine loses power or network.
+/// OnDisconnectedAsync promptly when a machine loses power or network. Also interrupts a
+/// dispense the machine has not confirmed within <c>Dispense:DispatchDeadline</c> (default 2 minutes)
+/// and moves the machine to Error.
 /// </summary>
 public sealed class HeartbeatMonitor : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<HeartbeatMonitor> _logger;
+    private readonly TimeSpan _dispatchDeadline;
 
     private static readonly TimeSpan CheckInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan StaleThreshold = TimeSpan.FromSeconds(90);
 
-    public HeartbeatMonitor(IServiceScopeFactory scopeFactory, ILogger<HeartbeatMonitor> logger)
+    public HeartbeatMonitor(IServiceScopeFactory scopeFactory, IConfiguration configuration, ILogger<HeartbeatMonitor> logger)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
+        _dispatchDeadline = configuration.GetValue("Dispense:DispatchDeadline", TimeSpan.FromMinutes(2));
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation(
-            "Heartbeat monitor started. Checking every {Interval}s, stale threshold: {Threshold}s",
-            CheckInterval.TotalSeconds, StaleThreshold.TotalSeconds);
+            "Heartbeat monitor started. Checking every {Interval}s, stale threshold: {Threshold}s, dispatch deadline: {Deadline}s",
+            CheckInterval.TotalSeconds, StaleThreshold.TotalSeconds, _dispatchDeadline.TotalSeconds);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -50,7 +54,16 @@ public sealed class HeartbeatMonitor : BackgroundService
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var dispenserRepo = scope.ServiceProvider.GetRequiredService<IDispenserRepository>();
+        var requestRepo = scope.ServiceProvider.GetRequiredService<IDispenseRequestRepository>();
         var mediator = scope.ServiceProvider.GetRequiredService<IMediator>();
+
+        foreach (var request in await requestRepo.GetDispatchedBeforeAsync(DateTimeOffset.UtcNow - _dispatchDeadline, ct))
+        {
+            _logger.LogWarning(
+                "Machine {DispenserId} did not confirm dispense request {RequestId} within {Deadline}s. Marking it Interrupted.",
+                request.DispenserId, request.Id, _dispatchDeadline.TotalSeconds);
+            await Send(mediator, new UpdateMachineStateCommand(request.DispenserId, MachineStateEvent.DispatchExpired, RequestId: request.Id), ct);
+        }
 
         var allMachines = await dispenserRepo.GetAllAsync(ct);
         var staleMachines = allMachines
@@ -65,12 +78,24 @@ public sealed class HeartbeatMonitor : BackgroundService
                 machine.Name, machine.Id,
                 (DateTimeOffset.UtcNow - machine.LastHeartbeatAt).TotalSeconds);
 
-            await mediator.Send(new UpdateMachineStateCommand(machine.Id, MachineStateEvent.Offline), ct);
+            await Send(mediator, new UpdateMachineStateCommand(machine.Id, MachineStateEvent.Offline), ct);
         }
 
         if (staleMachines.Count > 0)
         {
             _logger.LogWarning("{Count} machine(s) marked offline due to missed heartbeats", staleMachines.Count);
+        }
+    }
+
+    private async Task Send(IMediator mediator, UpdateMachineStateCommand command, CancellationToken ct)
+    {
+        try
+        {
+            await mediator.Send(command, ct);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning(ex, "{Event} for machine {DispenserId} not applied", command.Event, command.DispenserId);
         }
     }
 }

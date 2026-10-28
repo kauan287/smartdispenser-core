@@ -36,6 +36,19 @@ public sealed class UpdateMachineStateHandlerTests
     }
 
     [Fact]
+    public async Task Expired_dispatch_interrupts_the_request_and_moves_the_machine_to_error()
+    {
+        var (dispenser, request) = await SeedDispensing(inventory: 5);
+
+        await Handle(new UpdateMachineStateCommand(dispenser.Id, MachineStateEvent.DispatchExpired, RequestId: request.Id));
+
+        dispenser.Status.Should().Be(DispenserStatus.Error);
+        dispenser.CurrentDispenseRequestId.Should().BeNull();
+        dispenser.InventoryCount.Should().Be(5);
+        request.Status.Should().Be(DispenseRequestStatus.Interrupted);
+    }
+
+    [Fact]
     public async Task Late_confirmation_of_an_interrupted_dispense_completes_it_while_another_one_runs()
     {
         var (dispenser, interrupted) = await SeedDispensing(inventory: 5);

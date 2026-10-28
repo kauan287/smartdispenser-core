@@ -32,5 +32,8 @@ public sealed class DispenseRequestRepository(AppDbContext db) : IDispenseReques
     public Task<bool> IsPrescriptionInUseAsync(string prescriptionId, CancellationToken ct = default) =>
         db.DispenseRequests.AnyAsync(r => r.PrescriptionId == prescriptionId && r.Status != DispenseRequestStatus.Failed, ct);
 
+    public async Task<IReadOnlyList<DispenseRequest>> GetDispatchedBeforeAsync(DateTimeOffset cutoff, CancellationToken ct = default) =>
+        await db.DispenseRequests.Where(r => r.Status == DispenseRequestStatus.Dispatched && r.UpdatedAt < cutoff).ToListAsync(ct);
+
     public void Add(DispenseRequest request) => db.DispenseRequests.Add(request);
 }
