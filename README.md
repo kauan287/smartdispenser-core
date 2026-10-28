@@ -20,8 +20,9 @@ A machine dispenses only when all of these hold:
 3. A doctor approved it and the session is not paused waiting for approval (`human_approved`, `is_paused_waiting_approval`).
 4. The safety agent approved it (`safety_approved`).
 5. It proposes a medication and a dosage.
-6. The prescription has no other dispense request that is pending, dispatched, or completed.
-7. The payment gateway confirmed payment in a webhook whose HMAC-SHA256 signature is valid.
+6. The machine stocks that medication. The names are compared without regard to case.
+7. The prescription has no other dispense request that is pending, dispatched, interrupted, or completed.
+8. The payment gateway confirmed payment in a webhook whose HMAC-SHA256 signature is valid.
 
 ## Quick start
 
@@ -46,7 +47,7 @@ In a second terminal, register a machine and run the smoke test:
 ```bash
 curl -X POST http://localhost:5000/api/dispensers \
   -H "Content-Type: application/json" \
-  -d '{"name": "Lobby-01", "location": "Main lobby", "inventoryCapacity": 40}'
+  -d '{"name": "Lobby-01", "location": "Main lobby", "medication": "Amoxicillin", "inventoryCapacity": 40}'
 
 WEBHOOK_SECRET=local-development-secret-not-for-production scripts/smoke.sh http://localhost:5000
 ```
@@ -105,24 +106,32 @@ sequenceDiagram
 
 ### State machines
 
-`DispenseRequest` uses a transition table. A request moves `PendingPayment` to `Dispatched` to `Completed`, or to `Failed` from either non-terminal state. It cannot be dispatched before it is paid, paid twice, or failed after completion.
+`DispenseRequest` uses a transition table:
 
-`Dispenser` moves between `Offline`, `Idle`, `Dispensing`, `InventoryEmpty`, and `Error`. `Idle` always means stock is above zero. A restock moves an empty machine back to `Idle`, and dispensing the last unit moves it to `InventoryEmpty`. A machine can only confirm or fail the request it is dispensing. If it goes offline mid-dispense, that request fails.
+| From | To |
+|---|---|
+| `PendingPayment` | `Dispatched` (payment confirmed), `Failed` (payment failed, or the machine was not ready when the payment arrived) |
+| `Dispatched` | `Completed`, `Failed` (the machine reported a failure), `Interrupted` (the machine went offline or missed the dispatch deadline) |
+| `Interrupted` | `Completed`, `Failed` (the machine reported the outcome after it reconnected) |
+
+`Completed` and `Failed` are final. A request cannot be dispatched before it is paid, paid twice, or failed after completion. `Interrupted` means the machine received the command but nobody knows whether it released the medication. An interrupted request keeps its prescription locked. Only `Failed` releases a prescription, and only a failed payment, a machine that was not ready for a paid request, or the machine's own failure report lead there.
+
+`Dispenser` moves between `Offline`, `Idle`, `Dispensing`, `InventoryEmpty`, and `Error`. `Idle` always means stock is above zero. A restock moves an empty machine back to `Idle`, and dispensing the last unit moves it to `InventoryEmpty`. A machine can only confirm or fail its own requests. If it goes offline mid-dispense, the request becomes `Interrupted`. If it does not confirm within the dispatch deadline, the request becomes `Interrupted` and the machine moves to `Error`.
 
 ### Consistency
 
 - **One transaction per command.** Repositories only load and track entities. Each handler calls `IUnitOfWork.SaveChangesAsync` once, so the payment, the request, the dispenser, and the outbox message commit together or not at all.
-- **One live request per prescription.** The handler checks first, and a unique index on `DispenseRequests.PrescriptionId`, filtered to rows whose status is not `Failed`, rejects a concurrent second reservation.
-- **Idempotent webhooks.** A repeated idempotency key answers `{"received":true,"duplicate":true}` and changes nothing. A unique index on `Payments.IdempotencyKey` rejects a concurrent duplicate.
-- **Optimistic concurrency.** `Dispenser.Version` is a concurrency token that every state or stock change increments. If two commands race for one machine, the second save fails and rolls back, so a machine never receives two dispense commands.
+- **One live request per prescription.** The handler checks first, and a unique index on `DispenseRequests.PrescriptionId`, filtered to rows whose status is not `Failed`, rejects a concurrent second reservation. The loser gets the same `422` as the check.
+- **Idempotent webhooks.** The service stores a payment only for a confirmation or a known failure of a request that awaits payment. A repeated idempotency key of such an event answers `{"received":true,"duplicate":true}` and changes nothing. The service does not record any other event, so a replay is processed again and changes nothing again. Unique indexes on `Payments.IdempotencyKey` and `Payments.ExternalTransactionId` reject a concurrent duplicate.
+- **Optimistic concurrency.** `Dispenser.Version` is a concurrency token that every state or stock change increments. A heartbeat from a machine that is already online only records the time, so it never makes another command lose. If two commands race for one machine, the second save fails and rolls back, so a machine never receives two dispense commands. A webhook that loses such a race, or hits a unique index, answers `409`, and the gateway must retry the same payload.
 - **Transactional outbox.** When a dispense request reaches `Completed` or `Failed`, `AppDbContext.SaveChangesAsync` adds an `OutboxMessage` in the same transaction. `OutboxProcessor` polls every 2 seconds and publishes due messages to the dashboard. A failed delivery is retried after 5, 25, 125, and 625 seconds and is marked `DeadLetter` after the fifth failure.
 
 ### Resilience and security
 
 - `HealthTechApiClient` uses `AddStandardResilienceHandler`: 3 retries with exponential backoff from 2 seconds, a 10-second timeout per attempt, a 30-second total timeout, and a circuit breaker that opens for 60 seconds when at least half of 5 or more calls in 30 seconds fail. A 404 means the prescription is unknown, and the API rejects it with `422`. An outage answers `503`.
-- `WebhookSignatureMiddleware` computes HMAC-SHA256 over the raw request body and compares it with `X-Signature-SHA256: sha256=<lowercase hex>` using `CryptographicOperations.FixedTimeEquals`. A missing or wrong signature answers `401`, and a body over 512 KB answers `413`. The app refuses to start when `Webhook:Secret` is shorter than 32 characters.
+- `WebhookSignatureMiddleware` rejects a request without `X-Signature-SHA256` with `401` before it reads the body. It then computes HMAC-SHA256 over the raw request body and compares it with `sha256=<lowercase hex>` using `CryptographicOperations.FixedTimeEquals`. A wrong signature answers `401`. A body over 512 KB answers `413`, with or without a `Content-Length`. The app refuses to start when `Webhook:Secret` is shorter than 32 characters.
 - The webhook endpoint has a sliding-window rate limit of 10 requests per second, with a queue of 5. The limit is global, not per client. Excess requests get `429`.
-- `HeartbeatMonitor` checks every 30 seconds and marks a machine `Offline` after 90 seconds without a heartbeat.
+- `HeartbeatMonitor` checks every 30 seconds. It marks a machine `Offline` after 90 seconds without a heartbeat. It moves a request that is still `Dispatched` after `Dispense:DispatchDeadline` (default `00:02:00`) to `Interrupted`, and its machine to `Error`.
 - `/health/live` runs no checks and reports whether the process is up. `/health/ready` checks the database connection.
 - Serilog writes structured logs to the console, including one line per HTTP request.
 
@@ -134,10 +143,10 @@ Swagger UI at `/swagger` documents every endpoint. The OpenAPI document is at `/
 |---|---|---|
 | `GET /api/dispensers` | List machines and their state | 200 |
 | `GET /api/dispensers/{id}` | Get one machine | 200, 404 |
-| `POST /api/dispensers` | Register a machine (starts `Offline`) | 201, 400 |
-| `POST /api/dispensers/{id}/dispense` | Verify a prescription and reserve a dispense request | 202, 404 (machine), 422 (rejected), 503 (orchestrator down) |
+| `POST /api/dispensers` | Register a machine and the one medication it stocks (starts `Offline`) | 201, 400 |
+| `POST /api/dispensers/{id}/dispense` | Verify a prescription and reserve a dispense request | 202, 404 (machine), 422 (rejected, including a medication the machine does not stock), 503 (orchestrator down) |
 | `GET /api/dispense-requests/{id}` | Get a dispense request's status | 200, 404 |
-| `POST /api/payments/webhook` | Payment gateway callback, signed | 200, 401, 413, 429 |
+| `POST /api/payments/webhook` | Payment gateway callback, signed | 200, 401, 409 (retry), 413, 429 |
 
 A rejected dispense returns RFC 7807 problem details:
 
@@ -172,18 +181,26 @@ curl -X POST http://localhost:5000/api/payments/webhook \
   -H "Content-Type: application/json" -H "X-Signature-SHA256: sha256=$SIG" -d "$BODY"
 ```
 
-The webhook answers `200` for every signed request it processes, including one it cannot apply, such as an unknown request id. A gateway therefore does not retry a payload that can never succeed. The reason goes to the log.
+The webhook reads `status` without regard to case:
+
+| `status` | Effect |
+|---|---|
+| `confirmed` | Records the payment and dispatches the request to the machine. |
+| `failed`, `declined`, `cancelled`, `expired` | Records the payment and fails the request, which releases the prescription. |
+| Any other value, such as `pending` or `authorized` | Records nothing. The request stays `PendingPayment`. |
+
+The webhook answers `200` for every signed request it processes, including one it cannot apply, such as an unknown request id. A gateway therefore does not retry a payload that can never succeed. The reason goes to the log. The webhook answers `409` when a concurrent command changed the same data first. It saved nothing, so the gateway must retry the same payload.
 
 ### Machine protocol (SignalR)
 
-A machine connects to `/hubs/dispensers?machineId={dispenser-id}&firmwareVersion={version}`. Each call it makes applies to that machine. A machine in `Error` returns to service when it disconnects and reconnects, which a technician does after clearing the fault.
+A machine connects to `/hubs/dispensers?machineId={dispenser-id}&firmwareVersion={version}`. The hub drops a connection whose `machineId` is not a registered dispenser. Each call a machine makes applies to that machine. A machine in `Error` returns to service when it disconnects and reconnects, which a technician does after clearing the fault.
 
 | Direction | Method | Effect |
 |---|---|---|
 | Machine to server | `SendHeartbeat()` | Records liveness. An `Offline` machine comes back online. |
 | Machine to server | `ReportInventory(int count)` | Sets the stock level. |
-| Machine to server | `ConfirmDispense(Guid requestId)` | Completes the request and decrements stock. |
-| Machine to server | `ReportDispenseFailure(Guid requestId, string error)` | Fails the request and moves the machine to `Error`. |
+| Machine to server | `ConfirmDispense(Guid requestId)` | Completes the request and decrements stock. For an `Interrupted` request, this also works after a reconnect. |
+| Machine to server | `ReportDispenseFailure(Guid requestId, string error)` | Fails the request and moves the machine to `Error`. For an `Interrupted` request, it fails the request and leaves the machine's state alone. |
 | Server to machine | `ReceiveDispenseCommand({requestId, prescriptionId, medication, dosage})` | Dispense one unit. |
 
 `DispenseFlowTests` in the integration tests drives this protocol end to end with a real SignalR client.
@@ -215,8 +232,8 @@ A machine connects to `/hubs/dispensers?machineId={dispenser-id}&firmwareVersion
 dotnet test SmartDispenser.sln
 ```
 
-- **Unit tests** (55) cover the state machines, the outbox backoff, the HMAC middleware against a signature computed with `openssl`, and the three handlers. The handlers run on the real repositories over the in-memory provider. Separate tests cover a partial-save failure and a concurrent write to one machine.
-- **Integration tests** (9) host the API with `WebApplicationFactory`, connect a SignalR client as the machine, and stub the orchestrator's HTTP responses. They cover the full flow from reservation through payment and confirmation to the dashboard, plus replayed webhooks, unsigned webhooks, prescription reuse, unknown prescriptions, and the rate limit. Two of them check the database unique index and run only on PostgreSQL.
+- **Unit tests** cover the state machines, the outbox backoff, the HMAC middleware against a signature computed with `openssl`, and the three handlers. The handlers run on the real repositories over the in-memory provider. Separate tests cover a partial-save failure and a concurrent write to one machine.
+- **Integration tests** host the API with `WebApplicationFactory`, connect a SignalR client as the machine, and stub the orchestrator's HTTP responses. They cover the full flow from reservation through payment and confirmation to the dashboard, plus replayed webhooks, unsigned webhooks, prescription reuse, unknown prescriptions, interrupted dispenses, the dispatch deadline, and the rate limit. The webhook size tests run on Kestrel, because the in-memory test server buffers the request body. The tests that need a unique index or a transaction run only on PostgreSQL.
 
 To run the integration tests on PostgreSQL, start the Compose database and run `make test-postgres`. CI runs them on InMemory and on a PostgreSQL 16 service container.
 
@@ -233,6 +250,9 @@ To run the integration tests on PostgreSQL, start the Compose database and run `
 ## Known limitations
 
 - A paid request that cannot be dispatched, for example because the machine went offline, is marked `Failed` with "Refund required". The service does not issue refunds.
+- An `Interrupted` request keeps its prescription locked until its machine reports the outcome. No endpoint lets an operator resolve it by hand.
+- `OnDisconnectedAsync` does not check that the closing connection is the machine's current one. After a machine reconnects, its old connection can time out and mark the live machine `Offline` until its next heartbeat. A request in flight then becomes `Interrupted`, which keeps its prescription locked.
+- The in-memory provider has no transactions and no unique indexes. A save that fails partway can leave some rows behind, and two concurrent reservations of one prescription can both succeed. Use PostgreSQL for anything beyond a demo.
 - The webhook does not check the amount against a price list.
 - The outbox delivers to the in-process dashboard only. No external webhook or message broker is wired.
 
