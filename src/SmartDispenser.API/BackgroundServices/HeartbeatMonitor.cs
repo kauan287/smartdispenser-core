@@ -55,14 +55,13 @@ public sealed class HeartbeatMonitor : BackgroundService
         await using var scope = _scopeFactory.CreateAsyncScope();
         var dispenserRepo = scope.ServiceProvider.GetRequiredService<IDispenserRepository>();
         var requestRepo = scope.ServiceProvider.GetRequiredService<IDispenseRequestRepository>();
-        var mediator = scope.ServiceProvider.GetRequiredService<IMediator>();
 
         foreach (var request in await requestRepo.GetDispatchedBeforeAsync(DateTimeOffset.UtcNow - _dispatchDeadline, ct))
         {
             _logger.LogWarning(
                 "Machine {DispenserId} did not confirm dispense request {RequestId} within {Deadline}s. Marking it Interrupted.",
                 request.DispenserId, request.Id, _dispatchDeadline.TotalSeconds);
-            await Send(mediator, new UpdateMachineStateCommand(request.DispenserId, MachineStateEvent.DispatchExpired, RequestId: request.Id), ct);
+            await Send(new UpdateMachineStateCommand(request.DispenserId, MachineStateEvent.DispatchExpired, RequestId: request.Id), ct);
         }
 
         var allMachines = await dispenserRepo.GetAllAsync(ct);
@@ -78,7 +77,7 @@ public sealed class HeartbeatMonitor : BackgroundService
                 machine.Name, machine.Id,
                 (DateTimeOffset.UtcNow - machine.LastHeartbeatAt).TotalSeconds);
 
-            await Send(mediator, new UpdateMachineStateCommand(machine.Id, MachineStateEvent.Offline), ct);
+            await Send(new UpdateMachineStateCommand(machine.Id, MachineStateEvent.Offline), ct);
         }
 
         if (staleMachines.Count > 0)
@@ -87,11 +86,16 @@ public sealed class HeartbeatMonitor : BackgroundService
         }
     }
 
-    private async Task Send(IMediator mediator, UpdateMachineStateCommand command, CancellationToken ct)
+    /// <summary>
+    /// Each command gets its own scope, so a save that loses a race leaves no tracked changes
+    /// behind for the next machine's save to trip over.
+    /// </summary>
+    private async Task Send(UpdateMachineStateCommand command, CancellationToken ct)
     {
+        await using var scope = _scopeFactory.CreateAsyncScope();
         try
         {
-            await mediator.Send(command, ct);
+            await scope.ServiceProvider.GetRequiredService<IMediator>().Send(command, ct);
         }
         catch (InvalidOperationException ex)
         {

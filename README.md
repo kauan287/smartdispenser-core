@@ -6,6 +6,17 @@
 
 SmartDispenser Core is an ASP.NET Core 10 backend for a network of pharmaceutical vending machines. Before a machine releases a medication, the backend checks the prescription with the [HealthTech Agent Orchestrator](https://github.com/kauan287/healthtech-agent-orchestrator) and waits for a signed payment webhook. Machines connect over SignalR, and a Blazor Server dashboard shows their state live.
 
+![The Blazor Server dashboard with five machines: idle, dispensing, low on stock, out of stock, and offline](docs/dashboard.png)
+
+## What this project shows
+
+- Two state machines with explicit transition tables (`DispenseRequest.cs`, `Dispenser.cs`). A request cannot be dispatched before it is paid, paid twice, or failed after it completed.
+- One `SaveChangesAsync` per command and a transactional outbox (`AppDbContext.cs`, `OutboxProcessor.cs`). The payment, the request, the machine, and the outbox message commit together or not at all.
+- Races that tests force on purpose. Two webhooks for one machine, two reservations of one prescription, and a heartbeat during a payment each have a test, and the database-level ones run on PostgreSQL in CI.
+- An HMAC-SHA256 webhook check that reads the signature header before the body, compares in constant time, and caps chunked bodies at 512 KB (`WebhookSignatureMiddleware.cs`).
+- A machine protocol over SignalR that integration tests drive with a real client (`DispenserHub.cs`, `DispenseFlowTests.cs`).
+- A fail-closed contract with a Python service. A missing approval flag reads as `false`, and a tampered prescription reports the audit failure before any other rejection reason (`HealthTechApiClient.cs`, `Dtos.cs`).
+
 ## Part of a two-service system
 
 | Service | Stack | Role |
@@ -19,10 +30,11 @@ A machine dispenses only when all of these hold:
 2. The orchestrator's audit chain is intact (`audit_chain_valid`). This is checked first, so a tampered record reports the audit failure rather than a missing approval.
 3. A doctor approved it and the session is not paused waiting for approval (`human_approved`, `is_paused_waiting_approval`).
 4. The safety agent approved it (`safety_approved`).
-5. It proposes a medication and a dosage.
+5. It proposes a medication and a dosage, and the dosage is at most 100 characters.
 6. The machine stocks that medication. The names are compared without regard to case.
 7. The prescription has no other dispense request that is pending, dispatched, interrupted, or completed.
-8. The payment gateway confirmed payment in a webhook whose HMAC-SHA256 signature is valid.
+8. The machine is `Idle`, both when the request is reserved and when the payment arrives.
+9. The payment gateway confirmed payment in a webhook whose HMAC-SHA256 signature is valid.
 
 To run both services together and check the whole pipeline, from triage to a confirmed dispense, follow [Run both services together](https://github.com/kauan287/healthtech-agent-orchestrator#run-both-services-together) in the orchestrator's README.
 
@@ -38,19 +50,15 @@ cd smartdispenser-core
 dotnet run --project src/SmartDispenser.API
 ```
 
-The `Development` profile in `launchSettings.json` listens on http://localhost:5000 and uses the EF Core in-memory provider. Data is lost when the process stops.
+The `http` profile in `launchSettings.json` runs in the `Development` environment, listens on http://localhost:5000 and uses the EF Core in-memory provider. Data is lost when the process stops.
 
 - Swagger UI at http://localhost:5000/swagger
 - Dashboard at http://localhost:5000/dashboard
 - Liveness probe at http://localhost:5000/health/live
 
-In a second terminal, register a machine and run the smoke test:
+In a second terminal, run the smoke test. It registers a machine, checks the dashboard, and sends a forged and a signed webhook:
 
 ```bash
-curl -X POST http://localhost:5000/api/dispensers \
-  -H "Content-Type: application/json" \
-  -d '{"name": "Lobby-01", "location": "Main lobby", "medication": "Amoxicillin", "inventoryCapacity": 40}'
-
 WEBHOOK_SECRET=local-development-secret-not-for-production scripts/smoke.sh http://localhost:5000
 ```
 
@@ -146,9 +154,9 @@ Swagger UI at `/swagger` documents every endpoint. The OpenAPI document is at `/
 | `GET /api/dispensers` | List machines and their state | 200 |
 | `GET /api/dispensers/{id}` | Get one machine | 200, 404 |
 | `POST /api/dispensers` | Register a machine and the one medication it stocks (starts `Offline`) | 201, 400 |
-| `POST /api/dispensers/{id}/dispense` | Verify a prescription and reserve a dispense request | 202, 404 (machine), 422 (rejected, including a medication the machine does not stock), 503 (orchestrator down) |
+| `POST /api/dispensers/{id}/dispense` | Verify a prescription and reserve a dispense request | 202, 400, 404 (machine), 422 (rejected, including a medication the machine does not stock), 503 (orchestrator down) |
 | `GET /api/dispense-requests/{id}` | Get a dispense request's status | 200, 404 |
-| `POST /api/payments/webhook` | Payment gateway callback, signed | 200, 401, 409 (retry), 413, 429 |
+| `POST /api/payments/webhook` | Payment gateway callback, signed | 200, 400 (malformed, or a field longer than its column), 401, 409 (retry), 413, 429 |
 
 A rejected dispense returns RFC 7807 problem details:
 
@@ -197,6 +205,8 @@ The webhook answers `200` for every signed request it processes, including one i
 
 A machine connects to `/hubs/dispensers?machineId={dispenser-id}&firmwareVersion={version}`. The hub drops a connection whose `machineId` is not a registered dispenser. Each call a machine makes applies to that machine. A machine in `Error` returns to service when it disconnects and reconnects, which a technician does after clearing the fault.
 
+A machine must call `SendHeartbeat` more often than every 90 seconds. Otherwise `HeartbeatMonitor` marks it `Offline` and interrupts its dispense, even while its SignalR connection is open. A call fails with a `HubException` when another command changed the same machine first. Nothing was saved, so the machine retries the call, for example `ConfirmDispense`.
+
 | Direction | Method | Effect |
 |---|---|---|
 | Machine to server | `SendHeartbeat()` | Records liveness. An `Offline` machine comes back online. |
@@ -243,7 +253,7 @@ To run the integration tests on PostgreSQL, start the Compose database and run `
 
 **Reserve first, dispatch on payment.** Verifying the prescription before payment lets the client show a rejection before the patient pays. The hardware command waits for the webhook, so an unpaid request never reaches a machine.
 
-**MediatR for commands, repositories for reads.** The three state-changing operations are MediatR handlers in `Core`, testable without ASP.NET. Read endpoints query repositories directly because they hold no business rules. MediatR stays on 12.x because later versions moved to a commercial license.
+**MediatR for commands, repositories for reads.** The three operations with business rules are MediatR handlers in `Core`, testable without ASP.NET. Reads and machine registration hold no rules, so their controllers call the repositories directly. `OutboxProcessor` also queries `AppDbContext` directly. MediatR stays on 12.x because later versions moved to a commercial license.
 
 **The dashboard runs in process.** Blazor Server already holds a SignalR circuit to the browser, so the dashboard subscribes to `DispenserNotifier` events inside the process. An earlier version opened a second SignalR client from the server back to its own public URL, which failed behind Docker port mapping. The trade-off is that dashboard events stay in one process. Several API instances would need a SignalR backplane and a shared event bus.
 
@@ -256,6 +266,7 @@ To run the integration tests on PostgreSQL, start the Compose database and run `
 - `OnDisconnectedAsync` does not check that the closing connection is the machine's current one. After a machine reconnects, its old connection can time out and mark the live machine `Offline` until its next heartbeat. A request in flight then becomes `Interrupted`, which keeps its prescription locked.
 - The in-memory provider has no transactions and no unique indexes. A save that fails partway can leave some rows behind, and two concurrent reservations of one prescription can both succeed. Use PostgreSQL for anything beyond a demo.
 - The webhook does not check the amount against a price list.
+- The REST API has no authentication. Anyone who can reach it can register machines, reserve prescriptions, and read dispense requests. Swagger UI is served in every environment. A production deployment needs an identity provider in front of the API, and an API key or mutual TLS for the gateway on top of the HMAC signature.
 - The outbox has one consumer today, the in-process dashboard. `DispenserNotifier.PublishDispenseResultAsync` raises an in-process event and returns a completed task, so delivery does not fail, and the retry, backoff, and dead-letter path guards nothing yet. That path pays off once a real external consumer is added, such as a completion webhook to the orchestrator or a message broker.
 
 ## License

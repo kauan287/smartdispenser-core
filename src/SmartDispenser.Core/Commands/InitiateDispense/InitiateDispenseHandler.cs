@@ -63,6 +63,8 @@ public sealed class InitiateDispenseHandler(
             return Reject(reason);
         if (prescription is not { ProposedMedication: { } medication, Dosage: { } dosage })
             return Reject("Prescription has no medication or dosage.");
+        if (dosage.Length > DispenseRequest.DosageMaxLength)
+            return Reject($"Prescription dosage is longer than {DispenseRequest.DosageMaxLength} characters.");
         if (!dispenser.Stocks(medication))
             return Reject($"This dispenser stocks {dispenser.Medication}, but the prescription is for {medication}.");
         if (!dispenser.CanDispense())

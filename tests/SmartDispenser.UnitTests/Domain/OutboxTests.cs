@@ -25,6 +25,16 @@ public sealed class OutboxTests
     }
 
     [Fact]
+    public void Failure_message_is_cut_to_the_length_of_its_column()
+    {
+        var message = OutboxMessage.Create(OutboxEvents.DispenseResult, new DispenseResultNotification(Guid.Empty, true));
+
+        message.RecordFailure(new string('x', 3000));
+
+        message.LastError.Should().Be(new string('x', 2000));
+    }
+
+    [Fact]
     public async Task Finishing_a_request_writes_its_result_to_the_outbox_in_the_same_save()
     {
         await using var db = TestDb.Create();

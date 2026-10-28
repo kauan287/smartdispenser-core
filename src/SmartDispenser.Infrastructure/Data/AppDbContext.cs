@@ -80,11 +80,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.Property(r => r.PrescriptionId).HasMaxLength(100).IsRequired();
             e.Property(r => r.PatientIdentifier).HasMaxLength(100).IsRequired();
             e.Property(r => r.Medication).HasMaxLength(200).IsRequired();
-            e.Property(r => r.Dosage).HasMaxLength(100).IsRequired();
+            e.Property(r => r.Dosage).HasMaxLength(DispenseRequest.DosageMaxLength).IsRequired();
             e.Property(r => r.Status)
                 .HasConversion<string>()
                 .HasMaxLength(40);
-            e.Property(r => r.FailureReason).HasMaxLength(500);
+            e.Property(r => r.FailureReason).HasMaxLength(DispenseRequest.FailureReasonMaxLength);
 
             e.HasIndex(r => r.PrescriptionId)
                 .IsUnique()
@@ -96,11 +96,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         modelBuilder.Entity<Payment>(e =>
         {
             e.HasKey(p => p.Id);
-            e.Property(p => p.ExternalTransactionId).HasMaxLength(100).IsRequired();
-            e.Property(p => p.IdempotencyKey).HasMaxLength(100).IsRequired();
-            e.Property(p => p.Currency).HasMaxLength(10).IsRequired();
-            e.Property(p => p.GatewayProvider).HasMaxLength(50).IsRequired();
-            e.Property(p => p.GatewayResponse).HasMaxLength(1000);
+            e.Property(p => p.ExternalTransactionId).HasMaxLength(Payment.TransactionIdMaxLength).IsRequired();
+            e.Property(p => p.IdempotencyKey).HasMaxLength(Payment.IdempotencyKeyMaxLength).IsRequired();
+            e.Property(p => p.Currency).HasMaxLength(Payment.CurrencyMaxLength).IsRequired();
+            e.Property(p => p.GatewayProvider).HasMaxLength(Payment.ProviderMaxLength).IsRequired();
+            e.Property(p => p.GatewayResponse).HasMaxLength(Payment.GatewayResponseMaxLength);
             e.Property(p => p.Amount).HasColumnType("decimal(18,4)");
             e.Property(p => p.Status)
                 .HasConversion<string>()
@@ -115,7 +115,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.HasKey(o => o.Id);
             e.Property(o => o.EventType).HasMaxLength(100).IsRequired();
             e.Property(o => o.Payload).HasColumnType("jsonb");
-            e.Property(o => o.LastError).HasMaxLength(2000);
+            e.Property(o => o.LastError).HasMaxLength(OutboxMessage.LastErrorMaxLength);
             e.Property(o => o.Status)
                 .HasConversion<string>()
                 .HasMaxLength(20);
