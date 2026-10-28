@@ -6,6 +6,8 @@
 
 SmartDispenser Core is an ASP.NET Core 10 backend for a network of pharmaceutical vending machines. Before a machine releases a medication, the backend checks the prescription with the [HealthTech Agent Orchestrator](https://github.com/kauan287/healthtech-agent-orchestrator) and waits for a signed payment webhook. Machines connect over SignalR, and a Blazor Server dashboard shows their state live.
 
+**Live demo.** Dashboard at https://smartdispenser-core.onrender.com/dashboard and Swagger UI at https://smartdispenser-core.onrender.com/swagger. It runs on Render's free plan with the in-memory database, so the first request after 15 idle minutes takes about a minute, and the data resets on every restart. The Blueprint lives in [healthtech-agent-orchestrator](https://github.com/kauan287/healthtech-agent-orchestrator#deploy-both-services-to-render).
+
 ![The Blazor Server dashboard with five machines: idle, dispensing, low on stock, out of stock, and offline](docs/dashboard.png)
 
 ## What this project shows
