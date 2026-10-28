@@ -102,6 +102,31 @@ public sealed class DispenseFlowTests(AppFactory factory) : IClassFixture<AppFac
     }
 
     [Fact]
+    public async Task Pending_gateway_event_is_acknowledged_and_the_later_confirmation_dispenses()
+    {
+        var rx = UniqueId("RX");
+        factory.Orchestrator.Returns(rx, ApprovedPrescription(rx));
+        var dispenserId = await RegisterDispenser(_http);
+        await using var machine = await MachineClient.ConnectAsync(factory, dispenserId);
+        await machine.ReportInventory(5);
+        var initiate = await _http.PostAsJsonAsync($"/api/dispensers/{dispenserId}/dispense",
+            new { prescriptionId = rx, patientIdentifier = "PATIENT-42" });
+        var requestId = (await initiate.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("dispenseRequestId").GetGuid();
+        var transactionId = UniqueId("TX");
+
+        var pending = await _http.SendAsync(factory.SignedWebhook(PaymentJson(requestId, transactionId, "pending")));
+
+        pending.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await RequestStatus(requestId)).Should().Be("PendingPayment");
+
+        var confirmed = await _http.SendAsync(factory.SignedWebhook(PaymentJson(requestId, transactionId, "confirmed")));
+
+        confirmed.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await machine.NextCommand(TimeSpan.FromSeconds(5))).GetProperty("requestId").GetGuid().Should().Be(requestId);
+        (await RequestStatus(requestId)).Should().Be("Dispatched");
+    }
+
+    [Fact]
     public async Task Unsigned_webhook_is_rejected_and_nothing_is_dispensed()
     {
         var response = await _http.PostAsync("/api/payments/webhook",
@@ -241,14 +266,14 @@ public sealed class DispenseFlowTests(AppFactory factory) : IClassFixture<AppFac
         return (machine, requestId);
     }
 
-    internal static string PaymentJson(Guid requestId, string transactionId) => JsonSerializer.Serialize(new
+    internal static string PaymentJson(Guid requestId, string transactionId, string status = "confirmed") => JsonSerializer.Serialize(new
     {
         transactionId,
-        idempotencyKey = $"idem-{transactionId}",
+        idempotencyKey = $"idem-{transactionId}-{status}",
         dispenseRequestId = requestId.ToString(),
         amount = 12.50m,
         currency = "EUR",
-        status = "confirmed",
+        status,
         provider = "sandbox",
         timestamp = "2026-10-27T12:00:00Z",
     });

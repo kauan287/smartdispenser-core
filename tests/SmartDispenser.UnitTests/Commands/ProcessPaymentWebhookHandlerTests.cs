@@ -53,6 +53,40 @@ public sealed class ProcessPaymentWebhookHandlerTests
         _notifier.Commands.Should().BeEmpty();
     }
 
+    [Theory]
+    [InlineData("failed")]
+    [InlineData("declined")]
+    [InlineData("cancelled")]
+    [InlineData("expired")]
+    [InlineData("DECLINED")]
+    public async Task Each_gateway_failure_status_fails_the_request(string status)
+    {
+        var (_, request) = await SeedPendingRequest();
+
+        await Handle(Payment(request.Id, "TX-1", status) with { GatewayResponse = "card declined" });
+
+        request.Status.Should().Be(DispenseRequestStatus.Failed);
+        request.FailureReason.Should().Be("Payment failed: card declined");
+        (await _db.Payments.SingleAsync()).Status.Should().Be(PaymentStatus.Failed);
+    }
+
+    [Theory]
+    [InlineData("pending")]
+    [InlineData("authorized")]
+    [InlineData("processing")]
+    public async Task Intermediate_gateway_status_is_acknowledged_and_changes_nothing(string status)
+    {
+        var (dispenser, request) = await SeedPendingRequest();
+
+        var result = await Handle(Payment(request.Id, "TX-1", status));
+
+        result.Success.Should().BeTrue();
+        request.Status.Should().Be(DispenseRequestStatus.PendingPayment);
+        dispenser.Status.Should().Be(DispenserStatus.Idle);
+        (await _db.Payments.CountAsync()).Should().Be(0);
+        _notifier.Commands.Should().BeEmpty();
+    }
+
     [Fact]
     public async Task Payment_arriving_after_the_machine_went_offline_fails_the_request_for_refund()
     {
