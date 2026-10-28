@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.RateLimiting;
@@ -7,6 +8,7 @@ using Serilog.Events;
 using SmartDispenser.API.BackgroundServices;
 using SmartDispenser.API.Hubs;
 using SmartDispenser.API.Middleware;
+using SmartDispenser.API.RateLimiting;
 using SmartDispenser.API.SignalR;
 using SmartDispenser.Core.Commands.InitiateDispense;
 using SmartDispenser.Core.Interfaces;
@@ -59,7 +61,14 @@ builder.Services.AddRateLimiter(opts =>
         limiter.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
         limiter.QueueLimit = 5;
     });
+    opts.AddClientRateLimit(builder.Configuration);
     opts.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    opts.OnRejected = (ctx, _) =>
+    {
+        if (ctx.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
+            ctx.HttpContext.Response.Headers.RetryAfter = ((int)Math.Ceiling(retryAfter.TotalSeconds)).ToString(CultureInfo.InvariantCulture);
+        return ValueTask.CompletedTask;
+    };
 });
 
 builder.Services.AddHealthChecks().AddDbContextCheck<AppDbContext>("database", tags: ["ready"]);
