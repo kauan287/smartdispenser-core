@@ -63,6 +63,8 @@ public sealed class InitiateDispenseHandler(
             return Reject(reason);
         if (prescription is not { ProposedMedication: { } medication, Dosage: { } dosage })
             return Reject("Prescription has no medication or dosage.");
+        if (!dispenser.Stocks(medication))
+            return Reject($"This dispenser stocks {dispenser.Medication}, but the prescription is for {medication}.");
         if (!dispenser.CanDispense())
             return Reject($"Dispenser '{dispenser.Name}' is not ready (status: {dispenser.Status}).");
         var inUse = $"Prescription '{cmd.PrescriptionId}' already has a dispense request.";

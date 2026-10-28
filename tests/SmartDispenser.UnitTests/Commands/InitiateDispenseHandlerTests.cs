@@ -33,6 +33,7 @@ public sealed class InitiateDispenseHandlerTests
     [InlineData("tampered", "Audit chain integrity check failed: possible data tampering.")]
     [InlineData("tampered-and-pending", "Audit chain integrity check failed: possible data tampering.")]
     [InlineData("no-dosage", "Prescription has no medication or dosage.")]
+    [InlineData("other-medication", "This dispenser stocks Amoxicillin, but the prescription is for Ibuprofen.")]
     public async Task Prescription_failing_a_gate_is_rejected_and_nothing_is_reserved(string variant, string expectedReason)
     {
         var dispenser = await SeedIdleDispenser();
@@ -45,6 +46,7 @@ public sealed class InitiateDispenseHandlerTests
             "tampered" => approved with { AuditChainValid = false },
             "tampered-and-pending" => approved with { AuditChainValid = false, IsApproved = false, IsPendingApproval = true, SafetyApproved = false },
             "no-dosage" => approved with { Dosage = null },
+            "other-medication" => approved with { ProposedMedication = "Ibuprofen" },
             _ => throw new ArgumentOutOfRangeException(nameof(variant)),
         });
 
@@ -145,7 +147,7 @@ public sealed class InitiateDispenseHandlerTests
         var dbName = Guid.NewGuid().ToString();
         await using (var seed = TestDb.Create(dbName))
         {
-            var d = Dispenser.Create("Machine-01", "Pharmacy A", inventoryCapacity: 50);
+            var d = Dispenser.Create("Machine-01", "Pharmacy A", "Amoxicillin", inventoryCapacity: 50);
             d.GoOnline();
             d.UpdateInventory(30);
             seed.Dispensers.Add(d);
@@ -169,7 +171,7 @@ public sealed class InitiateDispenseHandlerTests
 
     private async Task<Dispenser> SeedIdleDispenser()
     {
-        var d = Dispenser.Create("Machine-01", "Pharmacy A", inventoryCapacity: 50);
+        var d = Dispenser.Create("Machine-01", "Pharmacy A", "Amoxicillin", inventoryCapacity: 50);
         d.GoOnline();
         d.UpdateInventory(30);
         _db.Dispensers.Add(d);

@@ -63,6 +63,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.HasKey(d => d.Id);
             e.Property(d => d.Name).HasMaxLength(100).IsRequired();
             e.Property(d => d.Location).HasMaxLength(200).IsRequired();
+            e.Property(d => d.Medication).HasMaxLength(200).IsRequired();
             e.Property(d => d.Status)
                 .HasConversion<string>()
                 .HasMaxLength(30);

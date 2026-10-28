@@ -111,7 +111,7 @@ public sealed class ProcessPaymentWebhookHandlerTests
         Guid requestId;
         await using (var seed = TestDb.Create(dbName))
         {
-            var dispenser = Dispenser.Create("Machine-01", "Pharmacy A", 10);
+            var dispenser = Dispenser.Create("Machine-01", "Pharmacy A", "Amoxicillin", 10);
             dispenser.GoOnline();
             dispenser.UpdateInventory(5);
             var request = DispenseRequest.Create(dispenser.Id, "RX-1", "PATIENT-1", "Amoxicillin", "500 mg");
@@ -153,7 +153,7 @@ public sealed class ProcessPaymentWebhookHandlerTests
 
     private async Task<(Dispenser, DispenseRequest)> SeedPendingRequest()
     {
-        var dispenser = Dispenser.Create("Machine-01", "Pharmacy A", 10);
+        var dispenser = Dispenser.Create("Machine-01", "Pharmacy A", "Amoxicillin", 10);
         dispenser.GoOnline();
         dispenser.UpdateInventory(5);
         var request = DispenseRequest.Create(dispenser.Id, "RX-1", "PATIENT-1", "Amoxicillin", "500 mg every 8 hours");

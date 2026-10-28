@@ -25,7 +25,7 @@ public sealed class UpdateMachineStateHandlerTests
     [Fact]
     public async Task Heartbeat_from_a_machine_that_is_already_online_publishes_nothing()
     {
-        var dispenser = Dispenser.Create("Machine-01", "Floor 1", 10);
+        var dispenser = Dispenser.Create("Machine-01", "Floor 1", "Amoxicillin", 10);
         dispenser.GoOnline();
         dispenser.UpdateInventory(5);
         _db.Dispensers.Add(dispenser);
@@ -39,7 +39,7 @@ public sealed class UpdateMachineStateHandlerTests
     [Fact]
     public async Task Heartbeat_from_an_offline_machine_brings_it_back_and_publishes_its_state()
     {
-        var dispenser = Dispenser.Create("Machine-01", "Floor 1", 10);
+        var dispenser = Dispenser.Create("Machine-01", "Floor 1", "Amoxicillin", 10);
         _db.Dispensers.Add(dispenser);
         await _db.SaveChangesAsync();
 
@@ -52,7 +52,7 @@ public sealed class UpdateMachineStateHandlerTests
     public async Task Heartbeat_does_not_make_a_concurrent_dispatch_lose_its_save()
     {
         var dbName = Guid.NewGuid().ToString();
-        var dispenser = Dispenser.Create("Machine-01", "Floor 1", 10);
+        var dispenser = Dispenser.Create("Machine-01", "Floor 1", "Amoxicillin", 10);
         dispenser.GoOnline();
         dispenser.UpdateInventory(5);
         await using (var seed = TestDb.Create(dbName))
@@ -127,7 +127,7 @@ public sealed class UpdateMachineStateHandlerTests
     {
         var (owner, request) = await SeedDispensing(inventory: 5);
         await Handle(new UpdateMachineStateCommand(owner.Id, MachineStateEvent.Offline));
-        var other = Dispenser.Create("Machine-02", "Floor 2", 10);
+        var other = Dispenser.Create("Machine-02", "Floor 2", "Amoxicillin", 10);
         other.GoOnline();
         _db.Dispensers.Add(other);
         await _db.SaveChangesAsync();
@@ -160,7 +160,7 @@ public sealed class UpdateMachineStateHandlerTests
 
     private async Task<(Dispenser, DispenseRequest)> SeedDispensing(int inventory)
     {
-        var dispenser = Dispenser.Create("Machine-01", "Floor 1", 10);
+        var dispenser = Dispenser.Create("Machine-01", "Floor 1", "Amoxicillin", 10);
         dispenser.GoOnline();
         dispenser.UpdateInventory(inventory);
         var request = DispenseRequest.Create(dispenser.Id, "RX-1", "PATIENT-1", "Amoxicillin", "500 mg");

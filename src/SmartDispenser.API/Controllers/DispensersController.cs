@@ -26,13 +26,13 @@ public sealed class DispensersController(IMediator mediator, IDispenserRepositor
     public async Task<IActionResult> GetById(Guid id, CancellationToken ct) =>
         await dispenserRepo.GetByIdAsync(id, ct) is { } dispenser ? Ok(DispenserStateDto.From(dispenser)) : NotFound();
 
-    /// <summary>Register a machine. It stays Offline until it connects to the hub with its id.</summary>
+    /// <summary>Register a machine and the one medication it stocks. It stays Offline until it connects to the hub with its id.</summary>
     [HttpPost]
     [ProducesResponseType<DispenserStateDto>(StatusCodes.Status201Created)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Register([FromBody] RegisterDispenserRequest request, CancellationToken ct)
     {
-        var dispenser = Dispenser.Create(request.Name, request.Location, request.InventoryCapacity);
+        var dispenser = Dispenser.Create(request.Name, request.Location, request.Medication, request.InventoryCapacity);
         dispenserRepo.Add(dispenser);
         await unitOfWork.SaveChangesAsync(ct);
         return CreatedAtAction(nameof(GetById), new { id = dispenser.Id }, DispenserStateDto.From(dispenser));
@@ -40,6 +40,7 @@ public sealed class DispensersController(IMediator mediator, IDispenserRepositor
 
     /// <summary>
     /// Verify a prescription with the HealthTech Agent Orchestrator and reserve it on this machine.
+    /// The prescription's medication must match the one the machine stocks, ignoring case.
     /// The machine dispenses only after the payment webhook confirms the returned request id.
     /// </summary>
     [HttpPost("{id:guid}/dispense")]
@@ -64,6 +65,7 @@ public sealed class DispensersController(IMediator mediator, IDispenserRepositor
     public sealed record RegisterDispenserRequest(
         [Required, MaxLength(100)] string Name,
         [Required, MaxLength(200)] string Location,
+        [Required, MaxLength(200)] string Medication,
         [Range(1, 10_000)] int InventoryCapacity);
 
     public sealed record InitiateDispenseRequest(

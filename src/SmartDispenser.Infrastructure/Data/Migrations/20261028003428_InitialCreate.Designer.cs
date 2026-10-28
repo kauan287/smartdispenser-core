@@ -12,7 +12,7 @@ using SmartDispenser.Infrastructure.Data;
 namespace SmartDispenser.Infrastructure.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261027191725_InitialCreate")]
+    [Migration("20261028003428_InitialCreate")]
     partial class InitialCreate
     {
         /// <inheritdoc />
@@ -117,6 +117,11 @@ namespace SmartDispenser.Infrastructure.Data.Migrations
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Location")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Medication")
                         .IsRequired()
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");

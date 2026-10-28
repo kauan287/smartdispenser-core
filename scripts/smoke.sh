@@ -27,7 +27,7 @@ echo "ok   GET /openapi/v1.json describes the dispense endpoint"
 
 NAME="Smoke-$RANDOM"
 CREATED=$(curl -fs -X POST "$BASE/api/dispensers" -H 'Content-Type: application/json' \
-  -d "{\"name\":\"$NAME\",\"location\":\"CI\",\"inventoryCapacity\":20}")
+  -d "{\"name\":\"$NAME\",\"location\":\"CI\",\"medication\":\"Amoxicillin\",\"inventoryCapacity\":20}")
 ID=$(jq -r .id <<<"$CREATED")
 [[ "$(jq -r .status <<<"$CREATED")" == "Offline" ]] || fail "new dispenser should be Offline: $CREATED"
 echo "ok   POST /api/dispensers -> $ID (Offline)"
