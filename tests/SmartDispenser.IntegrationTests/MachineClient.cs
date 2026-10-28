@@ -12,9 +12,12 @@ public sealed class MachineClient : IAsyncDisposable
 
     public ConcurrentQueue<JsonElement> Commands { get; } = new();
 
-    private MachineClient(HubConnection connection)
+    public Guid DispenserId { get; }
+
+    private MachineClient(HubConnection connection, Guid dispenserId)
     {
         _connection = connection;
+        DispenserId = dispenserId;
         _connection.On<JsonElement>("ReceiveDispenseCommand", command => Commands.Enqueue(command));
     }
 
@@ -27,7 +30,7 @@ public sealed class MachineClient : IAsyncDisposable
                 o.HttpMessageHandlerFactory = _ => factory.Server.CreateHandler();
             })
             .Build();
-        var client = new MachineClient(connection);
+        var client = new MachineClient(connection, machineId);
         await connection.StartAsync();
         return client;
     }

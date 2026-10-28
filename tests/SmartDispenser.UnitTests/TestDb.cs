@@ -12,6 +12,16 @@ public static class TestDb
             .Options);
 }
 
+public sealed class UniqueIndexRejectsDispenseRequests : SaveChangesInterceptor
+{
+    public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+        DbContextEventData eventData, InterceptionResult<int> result, CancellationToken ct = default) =>
+        eventData.Context!.ChangeTracker.Entries<DispenseRequest>().Any(e => e.State == EntityState.Added)
+            ? throw new DbUpdateException("simulated unique violation", new Npgsql.PostgresException(
+                "duplicate key value violates unique constraint", "ERROR", "ERROR", Npgsql.PostgresErrorCodes.UniqueViolation))
+            : base.SavingChangesAsync(eventData, result, ct);
+}
+
 public sealed class FailDispenserWrites : SaveChangesInterceptor
 {
     public override ValueTask<InterceptionResult<int>> SavingChangesAsync(

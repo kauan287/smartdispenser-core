@@ -139,6 +139,30 @@ public sealed class InitiateDispenseHandlerTests
         again.ErrorMessage.Should().Be("Prescription 'RX-007' already has a dispense request.");
     }
 
+    [Fact]
+    public async Task Reservation_rejected_by_the_unique_index_is_reported_like_the_in_use_check()
+    {
+        var dbName = Guid.NewGuid().ToString();
+        await using (var seed = TestDb.Create(dbName))
+        {
+            var d = Dispenser.Create("Machine-01", "Pharmacy A", inventoryCapacity: 50);
+            d.GoOnline();
+            d.UpdateInventory(30);
+            seed.Dispensers.Add(d);
+            await seed.SaveChangesAsync();
+        }
+        await using var racing = TestDb.Create(dbName, new UniqueIndexRejectsDispenseRequests());
+        _healthTech.Add(FakeHealthTechClient.Approved("RX-008"));
+        var dispenserId = (await racing.Dispensers.SingleAsync()).Id;
+
+        var result = await new InitiateDispenseHandler(_healthTech, new DispenserRepository(racing), new DispenseRequestRepository(racing),
+                racing, NullLogger<InitiateDispenseHandler>.Instance)
+            .Handle(new InitiateDispenseCommand(dispenserId, "RX-008", "PATIENT-42"), CancellationToken.None);
+
+        result.Error.Should().Be(InitiateDispenseError.Rejected);
+        result.ErrorMessage.Should().Be("Prescription 'RX-008' already has a dispense request.");
+    }
+
     private Task<InitiateDispenseResult> Handle(InitiateDispenseCommand cmd) =>
         new InitiateDispenseHandler(_healthTech, new DispenserRepository(_db), new DispenseRequestRepository(_db), _db,
             NullLogger<InitiateDispenseHandler>.Instance).Handle(cmd, CancellationToken.None);
