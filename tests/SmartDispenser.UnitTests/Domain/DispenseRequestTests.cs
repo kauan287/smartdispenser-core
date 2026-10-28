@@ -70,4 +70,30 @@ public sealed class DispenseRequestTests
         act.Should().Throw<InvalidOperationException>()
             .WithMessage($"Dispense request {request.Id} cannot move from PendingPayment to Completed.");
     }
+
+    [Theory]
+    [InlineData(true, DispenseRequestStatus.Completed)]
+    [InlineData(false, DispenseRequestStatus.Failed)]
+    public void Interrupted_request_resolves_when_the_machine_reports_its_outcome(bool dispensed, DispenseRequestStatus expected)
+    {
+        var request = NewRequest();
+        request.RecordPayment(Guid.NewGuid());
+        request.MarkDispatched();
+        request.MarkInterrupted();
+
+        if (dispensed) request.MarkCompleted(); else request.MarkFailed("Motor jammed");
+
+        request.Status.Should().Be(expected);
+    }
+
+    [Fact]
+    public void Request_awaiting_payment_cannot_be_interrupted()
+    {
+        var request = NewRequest();
+
+        var act = () => request.MarkInterrupted();
+
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage($"Dispense request {request.Id} cannot move from PendingPayment to Interrupted.");
+    }
 }

@@ -121,6 +121,24 @@ public sealed class InitiateDispenseHandlerTests
         third.ErrorMessage.Should().Be("Prescription 'RX-006' already has a dispense request.");
     }
 
+    [Fact]
+    public async Task Prescription_whose_earlier_dispense_was_interrupted_stays_reserved()
+    {
+        var dispenser = await SeedIdleDispenser();
+        _healthTech.Add(FakeHealthTechClient.Approved("RX-007"));
+        await Handle(new InitiateDispenseCommand(dispenser.Id, "RX-007", "PATIENT-42"));
+        var interrupted = await _db.DispenseRequests.SingleAsync();
+        interrupted.RecordPayment(Guid.NewGuid());
+        interrupted.MarkDispatched();
+        interrupted.MarkInterrupted();
+        await _db.SaveChangesAsync();
+
+        var again = await Handle(new InitiateDispenseCommand(dispenser.Id, "RX-007", "PATIENT-42"));
+
+        again.Error.Should().Be(InitiateDispenseError.Rejected);
+        again.ErrorMessage.Should().Be("Prescription 'RX-007' already has a dispense request.");
+    }
+
     private Task<InitiateDispenseResult> Handle(InitiateDispenseCommand cmd) =>
         new InitiateDispenseHandler(_healthTech, new DispenserRepository(_db), new DispenseRequestRepository(_db), _db,
             NullLogger<InitiateDispenseHandler>.Instance).Handle(cmd, CancellationToken.None);

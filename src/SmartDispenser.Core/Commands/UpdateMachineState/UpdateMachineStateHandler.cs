@@ -56,7 +56,7 @@ public sealed class UpdateMachineStateHandler(
                 var interrupted = dispenser.CurrentDispenseRequestId;
                 dispenser.GoOffline();
                 if (interrupted is not null)
-                    await UpdateRequest(interrupted.Value, r => r.MarkFailed("Machine went offline during dispense."), ct);
+                    (await LoadRequest(interrupted.Value, ct)).MarkInterrupted();
                 break;
 
             case MachineStateEvent.InventoryUpdated:
@@ -64,15 +64,19 @@ public sealed class UpdateMachineStateHandler(
                 break;
 
             case MachineStateEvent.DispenseCompleted:
-                var completedId = Required(cmd.RequestId);
-                dispenser.CompleteDispensing(completedId);
-                await UpdateRequest(completedId, r => r.MarkCompleted(), ct);
+                var completed = await LoadOwnRequest(Required(cmd.RequestId));
+                if (completed.Status == DispenseRequestStatus.Interrupted)
+                    dispenser.RecordLateDispense();
+                else
+                    dispenser.CompleteDispensing(completed.Id);
+                completed.MarkCompleted();
                 break;
 
             case MachineStateEvent.DispenseFailed:
-                var failedId = Required(cmd.RequestId);
-                dispenser.FailDispensing(failedId);
-                await UpdateRequest(failedId, r => r.MarkFailed(cmd.ErrorMessage ?? "Machine reported a dispensing failure."), ct);
+                var failed = await LoadOwnRequest(Required(cmd.RequestId));
+                if (failed.Status != DispenseRequestStatus.Interrupted)
+                    dispenser.FailDispensing(failed.Id);
+                failed.MarkFailed(cmd.ErrorMessage ?? "Machine reported a dispensing failure.");
                 break;
         }
 
@@ -82,12 +86,17 @@ public sealed class UpdateMachineStateHandler(
 
         T Required<T>(T? value) where T : struct =>
             value ?? throw new ArgumentException($"{cmd.Event} requires a value it did not receive.");
+
+        async Task<DispenseRequest> LoadOwnRequest(Guid requestId)
+        {
+            var request = await LoadRequest(requestId, ct);
+            return request.DispenserId == dispenser.Id
+                ? request
+                : throw new InvalidOperationException($"Dispense request {requestId} does not belong to dispenser '{dispenser.Name}'.");
+        }
     }
 
-    private async Task UpdateRequest(Guid requestId, Action<DispenseRequest> transition, CancellationToken ct)
-    {
-        var request = await requestRepo.GetByIdAsync(requestId, ct)
+    private async Task<DispenseRequest> LoadRequest(Guid requestId, CancellationToken ct) =>
+        await requestRepo.GetByIdAsync(requestId, ct)
             ?? throw new InvalidOperationException($"Dispense request {requestId} not found.");
-        transition(request);
-    }
 }

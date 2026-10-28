@@ -22,15 +22,52 @@ public sealed class UpdateMachineStateHandlerTests
     }
 
     [Fact]
-    public async Task Machine_going_offline_mid_dispense_fails_the_request()
+    public async Task Machine_going_offline_mid_dispense_interrupts_the_request()
     {
         var (dispenser, request) = await SeedDispensing(inventory: 5);
 
         await Handle(new UpdateMachineStateCommand(dispenser.Id, MachineStateEvent.Offline));
 
         dispenser.Status.Should().Be(DispenserStatus.Offline);
-        request.Status.Should().Be(DispenseRequestStatus.Failed);
-        request.FailureReason.Should().Be("Machine went offline during dispense.");
+        dispenser.CurrentDispenseRequestId.Should().BeNull();
+        request.Status.Should().Be(DispenseRequestStatus.Interrupted);
+        request.FailureReason.Should().BeNull();
+        (await _db.OutboxMessages.CountAsync()).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Late_confirmation_of_an_interrupted_dispense_completes_it_while_another_one_runs()
+    {
+        var (dispenser, interrupted) = await SeedDispensing(inventory: 5);
+        await Handle(new UpdateMachineStateCommand(dispenser.Id, MachineStateEvent.Offline));
+        await Handle(new UpdateMachineStateCommand(dispenser.Id, MachineStateEvent.Online));
+        var current = await Dispatch(dispenser, "RX-2");
+
+        await Handle(new UpdateMachineStateCommand(dispenser.Id, MachineStateEvent.DispenseCompleted, RequestId: interrupted.Id));
+
+        interrupted.Status.Should().Be(DispenseRequestStatus.Completed);
+        dispenser.Status.Should().Be(DispenserStatus.Dispensing);
+        dispenser.CurrentDispenseRequestId.Should().Be(current.Id);
+        dispenser.InventoryCount.Should().Be(4);
+        (await _db.OutboxMessages.SingleAsync()).Deserialize<DispenseResultNotification>()
+            .Should().Be(new DispenseResultNotification(interrupted.Id, true, null));
+    }
+
+    [Fact]
+    public async Task Machine_cannot_resolve_a_request_dispatched_to_another_machine()
+    {
+        var (owner, request) = await SeedDispensing(inventory: 5);
+        await Handle(new UpdateMachineStateCommand(owner.Id, MachineStateEvent.Offline));
+        var other = Dispenser.Create("Machine-02", "Floor 2", 10);
+        other.GoOnline();
+        _db.Dispensers.Add(other);
+        await _db.SaveChangesAsync();
+
+        var act = () => Handle(new UpdateMachineStateCommand(other.Id, MachineStateEvent.DispenseFailed, RequestId: request.Id));
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage($"Dispense request {request.Id} does not belong to dispenser 'Machine-02'.");
+        request.Status.Should().Be(DispenseRequestStatus.Interrupted);
     }
 
     private Task Handle(UpdateMachineStateCommand cmd) =>
@@ -40,6 +77,17 @@ public sealed class UpdateMachineStateHandlerTests
             new RecordingNotifier(),
             _db,
             NullLogger<UpdateMachineStateHandler>.Instance).Handle(cmd, CancellationToken.None);
+
+    private async Task<DispenseRequest> Dispatch(Dispenser dispenser, string prescriptionId)
+    {
+        var request = DispenseRequest.Create(dispenser.Id, prescriptionId, "PATIENT-1", "Amoxicillin", "500 mg");
+        request.RecordPayment(Guid.NewGuid());
+        request.MarkDispatched();
+        dispenser.BeginDispensing(request.Id);
+        _db.Add(request);
+        await _db.SaveChangesAsync();
+        return request;
+    }
 
     private async Task<(Dispenser, DispenseRequest)> SeedDispensing(int inventory)
     {

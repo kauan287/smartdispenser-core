@@ -13,6 +13,7 @@ public enum DispenseRequestStatus
 {
     PendingPayment,
     Dispatched,
+    Interrupted,
     Completed,
     Failed
 }

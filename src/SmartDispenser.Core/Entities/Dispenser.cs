@@ -62,6 +62,13 @@ public sealed class Dispenser
         SetStatus(ReadyStatus);
     }
 
+    public void RecordLateDispense()
+    {
+        InventoryCount = Math.Max(0, InventoryCount - 1);
+        LastDispenseAt = DateTimeOffset.UtcNow;
+        SetStatus(Status is DispenserStatus.Idle or DispenserStatus.InventoryEmpty ? ReadyStatus : Status);
+    }
+
     public void FailDispensing(Guid requestId)
     {
         EnsureDispensing(requestId, "fail");

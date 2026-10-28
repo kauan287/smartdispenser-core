@@ -37,6 +37,22 @@ public sealed class DatabaseConstraintTests(AppFactory factory) : IClassFixture<
             .Should().Be(2);
     }
 
+    [SkippableFact]
+    public async Task Database_keeps_a_prescription_locked_while_its_dispense_is_interrupted()
+    {
+        Skip.IfNot(AppFactory.UsesPostgres, "The in-memory provider does not enforce unique indexes.");
+        var rx = $"RX-{Guid.NewGuid():N}"[..12];
+        var interrupted = DispenseRequest.Create(Guid.NewGuid(), rx, "PATIENT-1", "Amoxicillin", "500 mg");
+        interrupted.RecordPayment(Guid.NewGuid());
+        interrupted.MarkDispatched();
+        interrupted.MarkInterrupted();
+
+        await Save(interrupted);
+        var second = () => Save(DispenseRequest.Create(Guid.NewGuid(), rx, "PATIENT-2", "Amoxicillin", "500 mg"));
+
+        await second.Should().ThrowAsync<DbUpdateException>();
+    }
+
     private async Task Save(DispenseRequest request)
     {
         using var scope = factory.Services.CreateScope();
