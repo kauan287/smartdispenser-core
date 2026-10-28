@@ -74,22 +74,10 @@ public sealed class ProcessPaymentWebhookHandler(
         request.MarkDispatched();
         await unitOfWork.SaveChangesAsync(ct);
 
-        try
-        {
-            await notifier.SendDispenseCommandAsync(
-                dispenser.Id,
-                new DispenseCommand(request.Id, request.PrescriptionId, request.Medication, request.Dosage),
-                ct);
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Could not send dispense command {RequestId} to machine {DispenserId}", request.Id, dispenser.Id);
-            dispenser.FailDispensing(request.Id);
-            request.MarkFailed("Could not reach the machine. Refund required.");
-            await unitOfWork.SaveChangesAsync(ct);
-            return ProcessPaymentResult.Ok();
-        }
-
+        await notifier.SendDispenseCommandAsync(
+            dispenser.Id,
+            new DispenseCommand(request.Id, request.PrescriptionId, request.Medication, request.Dosage),
+            ct);
         await notifier.PublishStateAsync(DispenserStateDto.From(dispenser), ct);
         logger.LogInformation("Dispense request {RequestId} dispatched to machine {DispenserId}", request.Id, dispenser.Id);
         return ProcessPaymentResult.Ok();
